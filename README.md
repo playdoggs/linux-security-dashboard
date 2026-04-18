@@ -1,4 +1,4 @@
-# Linux Audit Dashboard
+# Linux Security Dashboard
 
 A plain-English, GUI-based security audit tool for Linux.  
 Built for people who want to know if their system is safe — without needing a cybersecurity degree.
@@ -63,11 +63,11 @@ sudo apt install deborphan lynis
 
 ```bash
 # Clone the repo
-git clone https://github.com/playdoggs/linux-audit-dashboard
-cd linux-audit-dashboard
+git clone https://github.com/playdoggs/linux-security-dashboard
+cd linux-security-dashboard
 
 # Run it
-python3 linux-audit-dashboard-v4.2.py
+python3 linux-security-dashboard.py
 ```
 
 ---

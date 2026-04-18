@@ -6,7 +6,7 @@
 ```bash
 python3 -c "
 import ast, sys
-with open('linux-audit-dashboard-v4.2.py') as f: src = f.read()
+with open('linux-security-dashboard.py') as f: src = f.read()
 ast.parse(src)
 print('syntax ok —', src.count('\n'), 'lines')
 "
@@ -14,7 +14,7 @@ print('syntax ok —', src.count('\n'), 'lines')
 
 ## Launch check
 ```bash
-python3 linux-audit-dashboard-v4.2.py
+python3 linux-security-dashboard.py
 ```
 Watch for: ImportError, AttributeError at startup, blank window, missing widgets.
 

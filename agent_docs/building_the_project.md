@@ -9,13 +9,13 @@
 
 ## Launch
 ```bash
-python3 linux-audit-dashboard-v4.2.py
+python3 linux-security-dashboard.py
 ```
 
 ## Files
 | File | Purpose |
 |------|---------|
-| `linux-audit-dashboard-v4.2.py` | Complete app — single file, ~5070 lines |
+| `linux-security-dashboard.py` | Complete app — single file, ~5070 lines |
 | `~/.audit-dashboard.conf` | Saved prefs: theme, lang, profile, sidebar collapse state |
 | `~/.audit-dashboard-undo.log` | Persistent undo log — JSON Lines, one dict per action |
 | `~/.audit-dashboard-errors.log` | Error log — written by `init_logging()`, never crashes app |
@@ -23,8 +23,8 @@ python3 linux-audit-dashboard-v4.2.py
 ## Validation — can it start?
 ```bash
 python3 -c "import PyQt6; print('PyQt6 ok')"
-python3 -c "import sys; ast = __import__('ast'); ast.parse(open('linux-audit-dashboard-v4.2.py').read()); print('syntax ok')"
-python3 linux-audit-dashboard-v4.2.py   # run it
+python3 -c "import sys; ast = __import__('ast'); ast.parse(open('linux-security-dashboard.py').read()); print('syntax ok')"
+python3 linux-security-dashboard.py   # run it
 ```
 
 ## Key imports (if you see ImportError these must be present)

@@ -25,7 +25,7 @@ Paste the raw URL of this file into Claude to resume development instantly.
 
 ## Project Summary
 
-**Linux Audit Dashboard** — an accessible, GUI-based cybersecurity health check
+**Linux Security Dashboard** — an accessible, GUI-based cybersecurity health check
 tool for Linux. Designed for non-technical users who want to know if their
 system is safe without needing a cybersecurity background.
 
@@ -116,7 +116,7 @@ system is safe without needing a cybersecurity background.
 - Desktop notification if new findings appear since last scan
 - What changed since last scan diff report
 - Headless mode: run without GUI for cron jobs
-  python3 linux-audit-dashboard.py --headless --output report.html
+  python3 linux-security-dashboard.py --headless --output report.html
 
 **Report improvements:**
 - Executive report: plain English, analogies, traffic lights, action summary

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Linux Audit Dashboard are documented here.
+All notable changes to Linux Security Dashboard are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
@@ -21,7 +21,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Duke Nukem health face SVG (6 states: clean to wrecked, updates live)
 - Multi-language support (EN, DE, FR, ES, PT, IT, NL, JP, CN, AR)
 - Scheduled scanning via cron integration with headless mode
-  `python3 linux-audit-dashboard.py --headless --output report.html`
+  `python3 linux-security-dashboard.py --headless --output report.html`
 - What changed since last scan diff report
 - Desktop notification on new findings
 - Executive report (plain English, analogies, traffic lights, cheeky tone)
