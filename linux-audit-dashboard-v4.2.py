@@ -18,6 +18,8 @@ import json         # Reading/writing the undo log file
 import subprocess   # Running shell commands safely
 import urllib.request, urllib.parse  # Fetching CVE data from the internet
 import datetime     # Timestamps for the undo log and session summary
+import time         # Small retry backoff delays for network calls
+import socket       # Detect timeout/network errors from urllib layers
 import base64       # Decoding the embedded face images
 import html         # Safely escaping text in the HTML report
 import logging      # Writing errors to a log file without crashing the app
@@ -35,13 +37,13 @@ from PyQt6.QtWidgets import (
     QDialog, QDialogButtonBox, QScrollArea, QComboBox, QStatusBar,
     QFileDialog, QListWidget, QListWidgetItem, QStackedWidget,
     QRadioButton, QButtonGroup, QLineEdit, QCheckBox, QGroupBox,
-    QSizePolicy, QScrollBar
+    QSizePolicy, QScrollBar, QInputDialog, QSplitterHandle
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize
 # QShortcut is in QtGui in PyQt6 (moved from QtWidgets in Qt5)
 from PyQt6.QtGui import (
     QFont, QColor, QPalette, QTextCursor, QPixmap,
-    QKeySequence, QShortcut
+    QKeySequence, QShortcut, QPainter
 )
 
 # ── File paths for persistent data ────────────────────────────────────────────
@@ -50,12 +52,25 @@ LOG_FILE      = Path.home() / ".audit-dashboard-errors.log"
 CONFIG_FILE   = Path.home() / ".audit-dashboard.conf"
 UNDO_LOG_FILE = Path.home() / ".audit-dashboard-undo.log"
 
-# Set up error logging — errors go to a file rather than crashing the app
-logging.basicConfig(
-    filename=str(LOG_FILE),
-    level=logging.ERROR,
-    format="%(asctime)s %(levelname)s %(message)s"
-)
+def init_logging():
+    """
+    Configure error logging with safe fallbacks.
+    Prefer the home-directory log, then /tmp, then stderr-only logging.
+    """
+    fmt = "%(asctime)s %(levelname)s %(message)s"
+    candidates = [LOG_FILE, Path("/tmp/.audit-dashboard-errors.log")]
+    for candidate in candidates:
+        try:
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            logging.basicConfig(filename=str(candidate), level=logging.ERROR, format=fmt, force=True)
+            return candidate
+        except OSError:
+            continue
+    logging.basicConfig(level=logging.ERROR, format=fmt, force=True)
+    return None
+
+# Set up error logging — errors go to a file when possible and never crash startup
+ACTIVE_LOG_FILE = init_logging()
 
 # ── Config file helpers ───────────────────────────────────────────────────────
 def load_config():
@@ -75,6 +90,27 @@ def save_config(section, key, value):
     with open(str(tmp), "w") as f:
         c.write(f)
     tmp.replace(CONFIG_FILE)  # Atomic rename — no partial writes
+
+def config_bool(value, default=False):
+    """Parse config string/bool into True/False safely."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "y"}
+
+def get_startup_theme(cfg):
+    """
+    Startup rule:
+    - Default to Light every launch
+    - Unless the user locked a theme, in which case use the locked theme
+    """
+    locked = config_bool(cfg.get("prefs", "theme_locked", fallback="false"))
+    if locked:
+        locked_theme = cfg.get("prefs", "locked_theme", fallback="Light")
+        if locked_theme in THEMES:
+            return locked_theme
+    return "Light"
 
 # ── Input validation ──────────────────────────────────────────────────────────
 # Only allow valid Linux package names — prevents command injection attacks
@@ -133,6 +169,40 @@ def apply_theme(name):
     """Switch the active theme. Call make_style() after to update the UI."""
     global T
     T.update(THEMES.get(name, THEMES["Dark"]))
+
+def build_palette():
+    """Build a QPalette from the current theme T.
+    Sets ALL the roles Fusion uses to draw frames and bevels — not just the
+    basic ones.  Without Mid/Dark/Shadow/Midlight the Fusion renderer derives
+    them from Window, producing dark borders on a white Light-mode background.
+    Call this whenever apply_theme() is called."""
+    p = QPalette()
+    for role, col in [
+        (QPalette.ColorRole.Window,           T["BG_DARK"]),
+        (QPalette.ColorRole.WindowText,       T["TEXT_MAIN"]),
+        (QPalette.ColorRole.Base,             T["BG_MID"]),
+        (QPalette.ColorRole.AlternateBase,    T["BG_CARD"]),
+        (QPalette.ColorRole.Text,             T["TEXT_MAIN"]),
+        (QPalette.ColorRole.BrightText,       T["TEXT_MAIN"]),
+        (QPalette.ColorRole.Button,           T["BG_CARD"]),
+        (QPalette.ColorRole.ButtonText,       T["TEXT_MAIN"]),
+        (QPalette.ColorRole.Highlight,        T["ACCENT"]),
+        (QPalette.ColorRole.HighlightedText,  T["BG_DARK"]),
+        (QPalette.ColorRole.Link,             T["ACCENT"]),
+        (QPalette.ColorRole.ToolTipBase,      T["BG_CARD"]),
+        (QPalette.ColorRole.ToolTipText,      T["TEXT_MAIN"]),
+        (QPalette.ColorRole.PlaceholderText,  T["TEXT_DIM"]),
+        # Frame/bevel roles — Fusion uses these for widget borders, scrollbar
+        # troughs, and button shadows.  Map them to our border/dim colors so
+        # they look right in both dark and light themes.
+        (QPalette.ColorRole.Light,            T["BG_DARK"]),
+        (QPalette.ColorRole.Midlight,         T["BG_CARD"]),
+        (QPalette.ColorRole.Mid,              T["BORDER"]),
+        (QPalette.ColorRole.Dark,             T["BORDER"]),
+        (QPalette.ColorRole.Shadow,           T["TEXT_DIM"]),
+    ]:
+        p.setColor(role, QColor(col))
+    return p
 
 def make_style():
     """Build and return the complete Qt stylesheet string for the current theme.
@@ -196,9 +266,11 @@ QPushButton#section_btn {{
     color: {T['TEXT_MAIN']};
     border: none;
     border-left: 3px solid {T['ACCENT']};
+    border-top: 1px solid {T['BORDER']};
     border-radius: 0;
-    padding: 9px 10px;
-    font-size: {f}px;
+    padding: 8px 10px;
+    font-size: {f-1}px;
+    font-weight: bold;
     text-align: left;
 }}
 QPushButton#section_btn:hover {{
@@ -223,6 +295,14 @@ QLineEdit {{
     padding: 4px 8px;
     font-size: {f-1}px;
 }}
+QInputDialog QLineEdit {{
+    background: #ffffff;
+    color: #1a1a1a;
+    border: 2px solid {T['ACCENT']};
+    border-radius: 4px;
+    padding: 6px 8px;
+    font-size: {f}px;
+}}
 /* ── Tables ── */
 QTableWidget {{
     background: {T['BG_MID']};
@@ -232,6 +312,7 @@ QTableWidget {{
     font-size: {f-1}px;
 }}
 QTableWidget::item {{ padding: 6px 8px; border-bottom: 1px solid {T['BORDER']}; }}
+QTableWidget QTableView {{ alternate-background-color: {T['BG_DARK']}; }}
 QTableWidget::item:selected {{ background: {T['ACCENT']}; color: {T['BG_DARK']}; }}
 QHeaderView::section {{
     background: {T['BG_CARD']};
@@ -249,12 +330,45 @@ QScrollBar::handle:vertical {{ background: {T['BORDER']}; border-radius: 5px; mi
 QScrollBar:horizontal {{ background: {T['BG_MID']}; height: 10px; }}
 QScrollBar::handle:horizontal {{ background: {T['BORDER']}; border-radius: 5px; }}
 /* ── Splitter handles — the draggable dividers between panels ── */
-QSplitter::handle:vertical {{ background: {T['ACCENT']}; height: 5px; border-radius: 2px; }}
-QSplitter::handle:horizontal {{ background: {T['BORDER']}; width: 4px; }}
+QSplitter::handle:vertical {{ background: {T['ACCENT']}; height: 10px; border-radius: 4px; }}
+QSplitter::handle:vertical:hover {{ background: {T['WARN']}; }}
+QSplitter::handle:horizontal {{ background: {T['BORDER']}; width: 10px; border-radius: 4px; }}
+QSplitter::handle:horizontal:hover {{ background: {T['ACCENT']}; }}
+/* ── Toolbar and risk bar — objectName-targeted so theme changes update them ── */
+QWidget#toolbar_bar {{
+    background: {T['BG_MID']};
+    border-bottom: 1px solid {T['BORDER']};
+}}
+QWidget#risk_panel_bar {{
+    background: {T['BG_MID']};
+    border-bottom: 2px solid {T['BORDER']};
+}}
+QWidget#sidebar_info_box {{
+    background: {T['BG_CARD']};
+    border-top: 1px solid {T['BORDER']};
+}}
+QWidget#sidebar_widget {{
+    background: {T['SIDEBAR']};
+}}
+QWidget#terminal_hdr {{
+    background: {T['BG_CARD']};
+    border-top: 2px solid {T['BORDER']};
+}}
+QWidget#findings_hdr {{
+    background: {T['BG_CARD']};
+    border-bottom: 1px solid {T['BORDER']};
+}}
+QFrame#tool_card {{
+    background: {T['BG_CARD']};
+    border: 1px solid {T['BORDER']};
+    border-radius: 6px;
+    margin: 2px;
+}}
 /* ── Label styles ── */
 QLabel#heading {{ color: {T['ACCENT']}; font-size: {f+1}px; letter-spacing: 2px; padding: 4px 0; font-weight: bold; }}
+QLabel#app_title {{ color: {T['ACCENT']}; font-size: {f}px; letter-spacing: 1px; font-weight: bold; }}
 QLabel#section_title {{ color: {T['TEXT_MAIN']}; font-size: {f-1}px; letter-spacing: 1px; padding: 2px 4px; font-weight: bold; background: {T['BG_MID']}; border-left: 3px solid {T['ACCENT']}; }}
-QLabel#section_sub {{ color: {T['TEXT_DIM']}; font-size: {f-2}px; padding: 2px 8px 4px 8px; font-style: italic; }}
+QLabel#section_sub {{ color: {T['TEXT_DIM']}; font-size: {f-3}px; padding: 0 8px 4px 14px; background: {T['BG_MID']}; border-left: 3px solid {T['ACCENT']}; }}
 QLabel#status {{ color: {T['TEXT_DIM']}; font-size: {f-1}px; padding: 2px 6px; }}
 /* ── Progress bar (the risk score bar) ── */
 QProgressBar {{
@@ -341,19 +455,21 @@ LANGS = {
         "update_ancient":"Abandoned like a gym membership in February 💀",
         "built_by":"Built by playdoggy 2026 — my first vibe app 🎮",
         "sec_scan":"SCAN YOUR SYSTEM",
-        "sec_scan_sub":"Checks your OS baseline — pre-installed and bundled components",
+        "sec_scan_sub":"What software is installed?",
         "sec_checks":"SECURITY CHECKS",
-        "sec_checks_sub":"Checks how your OS is configured — settings, permissions, policies",
+        "sec_checks_sub":"How is your OS configured?",
         "sec_cve":"CVE VULNERABILITY CHECK",
-        "sec_cve_sub":"Checks installed software against known security vulnerabilities",
+        "sec_cve_sub":"Known vulnerabilities in your software",
         "sec_tools":"RECOMMENDED TOOLS",
-        "sec_tools_sub":"Additional security and monitoring tools worth having",
+        "sec_tools_sub":"Extra security tools worth having",
         "sec_undo":"UNDO / ROLLBACK",
-        "sec_undo_sub":"Review and reverse actions taken by this app",
+        "sec_undo_sub":"Review and reverse app actions",
         "btn_unused":"🔍  Scan for Unused Software",
         "btn_network":"📡  Check Open Ports",
         "btn_services":"⚠   Check Risky Services",
         "btn_installed":"📦  List All Installed",
+        "btn_os_installed":"📦  OS Pre-installed Software",
+        "btn_user_installed":"📦  User Installed Software",
         "btn_fullscan":"🔒  RUN FULL SCAN",
         "btn_quick":"⚡  Quick Security Checks",
         "btn_lynis":"🛡  Run Lynis Full Audit",
@@ -448,8 +564,10 @@ LANGS = {
 }
 LANG = "EN"
 def L(k):
-    """Look up a UI string in the current language. Falls back to English."""
-    return LANGS.get(LANG, LANGS["EN"]).get(k, k)
+    """Look up a UI string in the current language.
+    Falls back to English if the key is missing from the active language dict.
+    This lets us add new keys to EN without updating every translation at once."""
+    return LANGS.get(LANG, LANGS["EN"]).get(k, LANGS["EN"].get(k, k))
 
 # ── Distro and package manager detection ──────────────────────────────────────
 def detect_distro():
@@ -513,7 +631,18 @@ def check_update_age():
     """Check how many days since the system's package list was last updated.
     Returns (days, message) or (None, '') if we can't tell."""
     try:
-        stamp = Path("/var/lib/apt/lists/partial").stat().st_mtime
+        stamp_path = None
+        for candidate in (
+            Path("/var/lib/apt/periodic/update-success-stamp"),
+            Path("/var/cache/apt/pkgcache.bin"),
+            Path("/var/lib/apt/lists/partial"),
+        ):
+            if candidate.exists():
+                stamp_path = candidate
+                break
+        if stamp_path is None:
+            return None, ""
+        stamp = stamp_path.stat().st_mtime
         days  = (datetime.datetime.now().timestamp() - stamp) / 86400
         if days < 3:  return days, L("update_ok")
         if days < 7:  return days, L("update_week")
@@ -792,12 +921,19 @@ class SessionTracker:
         now = datetime.datetime.now()
         duration = now - self.start_time
         mins = int(duration.total_seconds() / 60)
+        try:
+            hostname = subprocess.run(
+                ["hostname"], capture_output=True, text=True, timeout=3
+            ).stdout.strip() or "Unknown"
+        except Exception:
+            hostname = "Unknown"
         score_now  = RISK.score()
         score_then = self.score_at_start if self.score_at_start is not None else score_now
         improvement = max(0, score_then - score_now)
 
         lines = [
             f"SESSION SUMMARY — {now.strftime('%d %B %Y  %H:%M')}",
+            f"Hostname: {hostname}",
             f"Session duration: {mins} minute{'s' if mins != 1 else ''}",
             "",
         ]
@@ -873,7 +1009,9 @@ class RiskTracker:
 
     def score(self):
         """Calculate the current risk score. Capped at 100."""
-        weights = {"HIGH": 20, "MEDIUM": 8, "LOW": 3, "INFO": 1}
+        # INFO findings are informational only (inventory/status notes), not risk.
+        # Counting them inflated score during package inventory scans.
+        weights = {"HIGH": 20, "MEDIUM": 8, "LOW": 3, "INFO": 0}
         return min(100, sum(weights.get(f, 0) for f in self.findings))
 
     def label(self):
@@ -955,28 +1093,59 @@ class CommandWorker(QThread):
     error_ready  = pyqtSignal(str)  # Fired when there is error output
     finished_ok  = pyqtSignal()     # Fired when the command completes
 
-    def __init__(self, cmd, sudo=False, timeout=60):
+    def __init__(self, cmd, sudo=False, timeout=60, env=None, password=None):
         super().__init__()
-        self.cmd     = cmd      # List of command parts e.g. ["apt", "purge", "ftp"]
-        self.sudo    = sudo     # Whether to prepend "sudo" to the command
-        self.timeout = timeout  # Seconds before giving up
+        self.cmd      = cmd       # List of command parts e.g. ["apt", "purge", "ftp"]
+        self.sudo     = sudo      # Whether to prepend "sudo" to the command
+        self.timeout  = timeout   # Seconds before giving up
+        self.env      = env       # Optional env dict; None = inherit from parent process
+        self.password = password  # sudo password for -S mode (bytes or None)
 
     def run(self):
         """This runs in a background thread — never touch the GUI from here."""
         try:
-            # Prepend sudo if needed
-            full = (["sudo"] + self.cmd) if self.sudo else self.cmd
-            # Run the command, capture both stdout and stderr
-            p = subprocess.run(
-                full,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout
-            )
+            if self.sudo and self.password:
+                # Pass password via stdin with sudo -S.
+                # input= sets stdin to PIPE and writes the bytes then closes it.
+                full = ["sudo", "-S"] + self.cmd
+                p = subprocess.run(
+                    full,
+                    input=self.password + b"\n",
+                    capture_output=True,
+                    timeout=self.timeout,
+                    env=self.env,
+                )
+            else:
+                # No password — use DEVNULL for stdin so sudo cannot block waiting
+                # for a password on the parent terminal. If credentials are not
+                # cached, sudo will fail immediately with a clear error message
+                # rather than hanging silently in the background.
+                full = (["sudo"] + self.cmd) if self.sudo else self.cmd
+                p = subprocess.run(
+                    full,
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    timeout=self.timeout,
+                    env=self.env,
+                )
+            # Decode output — ignore encoding errors in case of binary output
+            stdout = p.stdout.decode("utf-8", errors="replace") if p.stdout else ""
+            stderr = p.stderr.decode("utf-8", errors="replace") if p.stderr else ""
+            # Strip the sudo "Password:" prompt from stderr so it doesn't show in terminal
+            if self.password and stderr:
+                stderr = "\n".join(
+                    l for l in stderr.splitlines()
+                    if not l.lower().startswith("[sudo]") and "password" not in l.lower()
+                )
             # Emit output to the main thread for display
-            if p.stdout: self.output_ready.emit(p.stdout)
-            if p.stderr: self.error_ready.emit(p.stderr)
-            self.finished_ok.emit()
+            if stdout: self.output_ready.emit(stdout)
+            # Only treat stderr as an error if the command actually failed.
+            # apt and many tools write warnings to stderr even on success.
+            if stderr:
+                if p.returncode != 0:
+                    self.error_ready.emit(stderr)
+                else:
+                    self.output_ready.emit(stderr)
 
         except subprocess.TimeoutExpired:
             self.error_ready.emit(f"Command timed out after {self.timeout} seconds.")
@@ -988,45 +1157,87 @@ class CommandWorker(QThread):
         except Exception as e:
             logging.error(f"CommandWorker error: {e}")
             self.error_ready.emit(str(e))
+        finally:
+            self.finished_ok.emit()
 
 
 class HttpWorker(QThread):
     """Fetches CVE vulnerability data from Ubuntu's security API.
     Runs in a background thread to avoid blocking the GUI during network calls."""
 
-    result_ready = pyqtSignal(str, object)  # (package_name, data_or_None)
+    result_ready = pyqtSignal(str, object)  # (package_name, (version, data_or_error))
     finished_ok  = pyqtSignal()
+    MAX_ATTEMPTS = 2
+    TIMEOUT_SECS = 8
 
     def __init__(self, packages):
         super().__init__()
         # List of (package_name, installed_version) tuples to check
         self.packages = packages
+        self._cancelled = False
+
+    def cancel(self):
+        """Request graceful cancellation (checked between package requests)."""
+        self._cancelled = True
+
+    def _classify_error(self, exc):
+        """Return short error class: timeout / network / error."""
+        if isinstance(exc, TimeoutError):
+            return "timeout"
+        if isinstance(exc, socket.timeout):
+            return "timeout"
+        if isinstance(exc, urllib.error.URLError):
+            reason = getattr(exc, "reason", None)
+            if isinstance(reason, socket.timeout):
+                return "timeout"
+            return "network"
+        msg = str(exc).lower()
+        if "timed out" in msg or "timeout" in msg:
+            return "timeout"
+        return "error"
 
     def run(self):
-        """Fetch CVE data for each package. Handles SSL and timeouts."""
+        """Fetch CVE data for each package with light retries."""
         import ssl
         # Use the system's trusted certificate store for secure connections
         ctx = ssl.create_default_context()
 
         for name, version in self.packages:
-            try:
-                url = (f"https://ubuntu.com/security/cves.json"
-                       f"?package={urllib.parse.quote(name)}&limit=5")
-                req = urllib.request.Request(
-                    url, headers={"User-Agent": "linux-audit/4.2"}
+            if self._cancelled:
+                break
+            err_class = "error"
+            err_text = "Unknown error"
+            for attempt in range(1, self.MAX_ATTEMPTS + 1):
+                if self._cancelled:
+                    break
+                try:
+                    url = (f"https://ubuntu.com/security/cves.json"
+                           f"?package={urllib.parse.quote(name)}&limit=5")
+                    req = urllib.request.Request(
+                        url, headers={"User-Agent": "linux-audit/4.2"}
+                    )
+                    with urllib.request.urlopen(req, timeout=self.TIMEOUT_SECS, context=ctx) as r:
+                        data = json.loads(r.read())
+                    if self._cancelled:
+                        break
+                    self.result_ready.emit(name, (version, data))
+                    err_class = None
+                    break
+                except Exception as e:
+                    err_class = self._classify_error(e)
+                    err_text = str(e)
+                    logging.error(
+                        f"CVE fetch {name} (attempt {attempt}/{self.MAX_ATTEMPTS}): {e}"
+                    )
+                    if attempt < self.MAX_ATTEMPTS:
+                        time.sleep(float(attempt))
+            if self._cancelled:
+                break
+            if err_class is not None:
+                self.result_ready.emit(
+                    name,
+                    (version, {"_error": err_class, "_detail": err_text})
                 )
-                with urllib.request.urlopen(req, timeout=8, context=ctx) as r:
-                    data = json.loads(r.read())
-                self.result_ready.emit(name, (version, data))
-
-            except urllib.error.URLError as e:
-                # Network not available or URL unreachable
-                logging.error(f"CVE fetch {name}: network error {e}")
-                self.result_ready.emit(name, None)
-
-            except Exception as e:
-                logging.error(f"CVE fetch {name}: {e}")
-                self.result_ready.emit(name, None)
 
         self.finished_ok.emit()
 
@@ -1066,6 +1277,28 @@ class WorkerMixin:
         return any(w.isRunning() for w in self._workers)
 
 
+class ArrowSplitterHandle(QSplitterHandle):
+    """Custom splitter handle that paints a small arrow cue."""
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        p.setPen(QColor(T["ACCENT"]))
+        font = p.font()
+        font.setBold(True)
+        font.setPointSize(max(9, fs(-2)))
+        p.setFont(font)
+        glyph = "⇕" if self.orientation() == Qt.Orientation.Vertical else "⇔"
+        p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, glyph)
+        p.end()
+
+
+class CueSplitter(QSplitter):
+    """Splitter with a more visible drag handle and arrow marker."""
+    def createHandle(self):
+        return ArrowSplitterHandle(self.orientation(), self)
+
+
 # ── Terminal output panel ─────────────────────────────────────────────────────
 class TerminalPanel(QWidget, WorkerMixin):
     """The scrolling text output panel at the bottom of the app.
@@ -1079,9 +1312,9 @@ class TerminalPanel(QWidget, WorkerMixin):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Header bar with title and control buttons
+        # Header bar with title and control buttons — styled via make_style() #terminal_hdr
         hdr = QWidget()
-        hdr.setStyleSheet(f"background:{T['BG_CARD']};border-top:2px solid {T['BORDER']};")
+        hdr.setObjectName("terminal_hdr")
         hl = QHBoxLayout(hdr)
         hl.setContentsMargins(8, 4, 8, 4)
         lbl = QLabel(L("terminal_hdr"))
@@ -1528,16 +1761,16 @@ class FindingsTable(QWidget, WorkerMixin):
         self.terminal    = terminal  # Reference to the terminal panel
         self.expert_mode = True      # Show all findings vs essential only
         self.profile_key = "mixed"  # Current system profile (affects tagging)
+        self._bulk_depth = 0        # >0 means bulk insert mode (defer sort/repaint)
+        self._seen_findings = set() # Fast duplicate check: (name, ftype)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── Header bar with title and controls ──
+        # ── Header bar with title and controls — styled via make_style() #findings_hdr ──
         hdr = QWidget()
-        hdr.setStyleSheet(
-            f"background:{T['BG_CARD']};border-bottom:1px solid {T['BORDER']};"
-        )
+        hdr.setObjectName("findings_hdr")
         hl = QHBoxLayout(hdr)
         hl.setContentsMargins(8, 6, 8, 6)
         fhdr_lbl = QLabel(L("findings_hdr"))
@@ -1579,19 +1812,27 @@ class FindingsTable(QWidget, WorkerMixin):
         self.table.setColumnWidth(3, 90)    # Tag
         self.table.setColumnWidth(4, 400)   # Detail — widest
         self.table.setColumnWidth(5, 240)   # Actions — needs room for buttons
-        # Allow the detail column to stretch when the window is resized
         hh.setStretchLastSection(False)
-        hh.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
 
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
-        self.table.setStyleSheet(f"alternate-background-color:{T['BG_DARK']};")
+        # alternate-background-color is handled globally in make_style() so it updates on theme change
         # Disable the built-in sort — we handle sorting ourselves
         self.table.setSortingEnabled(False)
         self.table.cellDoubleClicked.connect(self._on_double_click)
         layout.addWidget(self.table)
+
+        # "All looks well" banner — shown after a scan that found nothing bad
+        self._ok_banner = QLabel(
+            "✔  Great! All looks well — nothing concerning found from this scan."
+        )
+        self._ok_banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._apply_ok_banner_style()
+        self._ok_banner.setWordWrap(True)
+        self._ok_banner.setVisible(False)
+        layout.addWidget(self._ok_banner)
 
     # Risk priority for sorting — lower number = higher priority = shown first
     RISK_SORT = {"HIGH": 0, "MEDIUM": 1, "LOW": 2, "INFO": 3}
@@ -1640,12 +1881,91 @@ class FindingsTable(QWidget, WorkerMixin):
     def _is_duplicate(self, name, ftype):
         """Check if an identical finding is already in the table.
         Prevents the same issue appearing multiple times from repeated scans."""
-        for row in range(self.table.rowCount()):
-            n = self.table.item(row, 0)
-            t = self.table.item(row, 1)
-            if n and t and n.text() == name and t.text() == ftype:
-                return True
-        return False
+        return (name, ftype) in self._seen_findings
+
+    def _drop_seen_name(self, name):
+        """Remove all cached duplicate keys for a finding name."""
+        self._seen_findings = {k for k in self._seen_findings if k[0] != name}
+
+    def _apply_ok_banner_style(self):
+        """Re-apply banner style so theme changes update colours immediately."""
+        self._ok_banner.setStyleSheet(
+            f"background:{T['OK']}22;color:{T['OK']};border:1px solid {T['OK']};"
+            f"border-radius:6px;padding:14px;font-size:{fs()}px;font-weight:bold;"
+        )
+
+    def refresh_theme_styles(self):
+        """Refresh styles that are computed from the active theme at runtime."""
+        self._apply_ok_banner_style()
+
+    def _build_action_cell(self, name, ftype, risk, detail, cmd_remove=None, cmd_disable=None):
+        """Create the ACTIONS widget for one findings row."""
+        cell = QWidget()
+        cell.setStyleSheet("background:transparent;")
+        bl = QHBoxLayout(cell)
+        bl.setContentsMargins(4, 3, 4, 3)
+        bl.setSpacing(4)
+
+        exp_btn = QPushButton("?")
+        exp_btn.setObjectName("neutral")
+        exp_btn.setFixedSize(28, 28)
+        exp_btn.setToolTip("Explain this finding in plain English")
+        exp_btn.clicked.connect(
+            lambda _, n=name, ft=ftype, r=risk, d=detail:
+            ExplainDialog(n, ft, r, d, self.table).exec()
+        )
+        bl.addWidget(exp_btn)
+
+        ign_btn = QPushButton("✕")
+        ign_btn.setObjectName("neutral")
+        ign_btn.setFixedSize(28, 28)
+        ign_btn.setToolTip("Ignore this finding for this session")
+        ign_btn.clicked.connect(lambda _, n=name: self._ignore(n))
+        bl.addWidget(ign_btn)
+
+        if cmd_remove:
+            rb = QPushButton("REMOVE")
+            rb.setObjectName("danger")
+            rb.setMinimumWidth(80)
+            rb.setFixedHeight(28)
+            rb.setToolTip(f"Remove {name} from this system (asks for confirmation)")
+            rb.clicked.connect(
+                lambda _, c=cmd_remove, n=name, r=risk:
+                self._act(c, n, "remove", r)
+            )
+            bl.addWidget(rb)
+
+        if cmd_disable:
+            db = QPushButton("DISABLE")
+            db.setObjectName("warn")
+            db.setMinimumWidth(80)
+            db.setFixedHeight(28)
+            db.setToolTip(f"Disable {name} so it no longer runs (asks for confirmation)")
+            db.clicked.connect(
+                lambda _, c=cmd_disable, n=name, r=risk:
+                self._act(c, n, "disable", r)
+            )
+            bl.addWidget(db)
+
+        bl.addStretch()
+        return cell
+
+    def begin_bulk_update(self):
+        """Defer expensive UI work while adding many findings."""
+        self._bulk_depth += 1
+        if self._bulk_depth == 1:
+            self.table.setUpdatesEnabled(False)
+
+    def end_bulk_update(self):
+        """Apply deferred UI work after bulk add."""
+        if self._bulk_depth <= 0:
+            return
+        self._bulk_depth -= 1
+        if self._bulk_depth == 0:
+            self.table.setUpdatesEnabled(True)
+            self._sort_by_risk()
+            self.score_changed.emit()
+            self.table.viewport().update()
 
     def add_finding(self, name, ftype, risk, detail,
                     cmd_remove=None, cmd_disable=None):
@@ -1664,9 +1984,15 @@ class FindingsTable(QWidget, WorkerMixin):
         if not self.expert_mode and risk in ("INFO", "LOW"):
             return
 
+        self._seen_findings.add((name, ftype))
+
         # Update the risk tracker
         RISK.add(risk)
-        self.score_changed.emit()
+        if self._bulk_depth == 0:
+            self.score_changed.emit()
+        # A bad finding appeared — hide the "all looks well" banner if visible
+        if risk in ("HIGH", "MEDIUM"):
+            self.hide_all_ok_banner()
 
         # Build the new row
         row = self.table.rowCount()
@@ -1688,108 +2014,115 @@ class FindingsTable(QWidget, WorkerMixin):
                 item.setForeground(QColor(T["TEXT_MAIN"]))
             self.table.setItem(row, col, item)
 
-        # Store the risk level in hidden data so we can remove it later
-        self.table.item(row, 0).setData(Qt.ItemDataRole.UserRole, risk)
+        # Store row metadata in hidden data so sorting can rebuild action buttons safely
+        row_meta = {
+            "name": name,
+            "ftype": ftype,
+            "risk": risk,
+            "detail": detail,
+            "cmd_remove": cmd_remove,
+            "cmd_disable": cmd_disable,
+        }
+        self.table.item(row, 0).setData(Qt.ItemDataRole.UserRole, row_meta)
 
         # Build the ACTIONS cell — explain + ignore + remove/disable buttons
-        cell = QWidget()
-        cell.setStyleSheet("background:transparent;")
-        bl = QHBoxLayout(cell)
-        bl.setContentsMargins(4, 3, 4, 3)
-        bl.setSpacing(4)
-
-        # ? button — opens the plain English explanation
-        exp_btn = QPushButton("?")
-        exp_btn.setObjectName("neutral")
-        exp_btn.setFixedSize(28, 28)
-        exp_btn.setToolTip("Explain this finding in plain English")
-        exp_btn.clicked.connect(
-            lambda _, n=name, ft=ftype, r=risk, d=detail:
-            ExplainDialog(n, ft, r, d, self.table).exec()
-        )
-        bl.addWidget(exp_btn)
-
-        # ✕ button — ignores this finding for the session
-        ign_btn = QPushButton("✕")
-        ign_btn.setObjectName("neutral")
-        ign_btn.setFixedSize(28, 28)
-        ign_btn.setToolTip("Ignore this finding for this session")
-        ign_btn.clicked.connect(lambda _, n=name: self._ignore(n))
-        bl.addWidget(ign_btn)
-
-        # REMOVE button — removes the package (if applicable)
-        if cmd_remove:
-            rb = QPushButton("REMOVE")
-            rb.setObjectName("danger")
-            rb.setMinimumWidth(80)
-            rb.setFixedHeight(28)
-            rb.setToolTip(f"Remove {name} from this system (asks for confirmation)")
-            rb.clicked.connect(
-                lambda _, c=cmd_remove, n=name, r=risk:
-                self._act(c, n, "remove", r)
-            )
-            bl.addWidget(rb)
-
-        # DISABLE button — disables the service (if applicable)
-        if cmd_disable:
-            db = QPushButton("DISABLE")
-            db.setObjectName("warn")
-            db.setMinimumWidth(80)
-            db.setFixedHeight(28)
-            db.setToolTip(f"Disable {name} so it no longer runs (asks for confirmation)")
-            db.clicked.connect(
-                lambda _, c=cmd_disable, n=name, r=risk:
-                self._act(c, n, "disable", r)
-            )
-            bl.addWidget(db)
-
-        bl.addStretch()
+        cell = self._build_action_cell(name, ftype, risk, detail, cmd_remove, cmd_disable)
         self.table.setCellWidget(row, 5, cell)
         self.table.setRowHeight(row, 42)  # Tall enough to show buttons properly
 
         # Keep findings sorted: HIGH at top, then MEDIUM, LOW, INFO
-        self._sort_by_risk()
+        if self._bulk_depth == 0:
+            self._sort_by_risk()
 
     def _sort_by_risk(self):
         """Re-sort the table rows so HIGH risk items are always at the top.
-        Uses the RISK_SORT dict to determine order."""
+        All Qt item data is copied to plain Python structures BEFORE touching
+        the table — Qt deletes QTableWidgetItem when setItem() replaces it,
+        so holding live item references across setItem() calls causes crashes."""
         rows = []
         for r in range(self.table.rowCount()):
             risk_item = self.table.item(r, 2)
             risk_text = risk_item.text().split()[-1] if risk_item else "INFO"
-            priority  = self.RISK_SORT.get(risk_text, 3)
-            row_data  = {
-                "priority": priority,
-                "items":    [self.table.item(r, c) for c in range(5)],
-                "widget":   self.table.cellWidget(r, 5),
-                "height":   self.table.rowHeight(r),
-            }
-            rows.append(row_data)
+            name_item = self.table.item(r, 0)
+            user_data = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            row_risk = user_data.get("risk", risk_text) if isinstance(user_data, dict) else risk_text
+            priority  = self.RISK_SORT.get(row_risk, 3)
+
+            # Copy every cell's data into plain Python — no Qt references kept
+            cells = []
+            for c in range(5):
+                it = self.table.item(r, c)
+                if it:
+                    cells.append({
+                        "text":      it.text(),
+                        "fg":        it.foreground().color().name(),
+                        "bold":      it.font().bold(),
+                        "font":      QFont(it.font()),
+                    })
+                else:
+                    cells.append(None)
+
+            if isinstance(user_data, dict):
+                action_data = dict(user_data)
+            else:
+                action_data = {
+                    "name": cells[0]["text"] if cells[0] else "",
+                    "ftype": cells[1]["text"] if cells[1] else "",
+                    "risk": risk_text,
+                    "detail": cells[4]["text"] if cells[4] else "",
+                    "cmd_remove": None,
+                    "cmd_disable": None,
+                }
+
+            rows.append({"priority": priority, "cells": cells, "action_data": action_data})
 
         rows.sort(key=lambda x: x["priority"])
 
-        # Temporarily disable sorting while we rebuild the rows
+        # Rebuild rows from copied data, including action widgets so buttons stay aligned.
         for i, row_data in enumerate(rows):
-            for col, item in enumerate(row_data["items"]):
-                if item:
-                    new_item = QTableWidgetItem(item.text())
-                    new_item.setForeground(item.foreground())
-                    if item.font().bold():
-                        new_item.setFont(item.font())
-                    if col == 0:
-                        new_item.setData(
-                            Qt.ItemDataRole.UserRole,
-                            item.data(Qt.ItemDataRole.UserRole)
-                        )
+            for col, cell in enumerate(row_data["cells"]):
+                if cell:
+                    new_item = QTableWidgetItem(cell["text"])
+                    new_item.setForeground(QColor(cell["fg"]))
+                    if cell["bold"]:
+                        new_item.setFont(cell["font"])
                     self.table.setItem(i, col, new_item)
+            if self.table.item(i, 0):
+                self.table.item(i, 0).setData(
+                    Qt.ItemDataRole.UserRole, row_data["action_data"]
+                )
+            self.table.removeCellWidget(i, 5)
+            action = row_data["action_data"]
+            self.table.setCellWidget(
+                i,
+                5,
+                self._build_action_cell(
+                    action.get("name", ""),
+                    action.get("ftype", ""),
+                    action.get("risk", "INFO"),
+                    action.get("detail", ""),
+                    action.get("cmd_remove"),
+                    action.get("cmd_disable"),
+                )
+            )
+            self.table.setRowHeight(i, 42)
 
     def _ignore(self, name):
         """Remove a finding from the table and add it to the ignore list."""
         IGNORE_LIST.add(name)
+        self._drop_seen_name(name)
+        removed = False
         for r in range(self.table.rowCount() - 1, -1, -1):
             item = self.table.item(r, 0)
             if item and item.text() == name:
+                data = item.data(Qt.ItemDataRole.UserRole)
+                row_risk = data.get("risk") if isinstance(data, dict) else data
+                if row_risk in ("HIGH", "MEDIUM", "LOW", "INFO"):
+                    RISK.remove_entry(row_risk)
                 self.table.removeRow(r)
+                removed = True
+        if removed:
+            self.score_changed.emit()
         self.terminal.append_info(
             f"'{name}' ignored — won't be flagged again this session."
         )
@@ -1804,22 +2137,24 @@ class FindingsTable(QWidget, WorkerMixin):
 
     def _act(self, cmd, name, action_type, risk):
         """Run an action (remove/disable) after showing the confirmation dialog.
-        Checks if sudo is cached first — warns the user if not."""
+        Prompts for sudo password via a GUI dialog if credentials are not cached."""
 
-        # Check if sudo is cached to avoid silent hangs waiting for a password
+        # Determine if we need a password
+        sudo_password = None
         if not check_sudo_cached():
-            reply = QMessageBox.warning(
+            pw, ok = QInputDialog.getText(
                 self,
-                "Administrator Access Required",
-                "This action requires administrator (sudo) access.\n\n"
-                "Open a terminal and run:\n"
-                "    sudo -v\n\n"
-                "This caches your credentials for 15 minutes. Then come back and try again.\n\n"
-                "Try anyway? (will hang if sudo password is needed)",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
+                "Administrator Password Required",
+                "This action requires your sudo (administrator) password.\n"
+                "Your password is used once and never stored.",
+                QLineEdit.EchoMode.Password,
             )
-            if reply != QMessageBox.StandardButton.Yes:
+            if not ok or not pw:
+                self.terminal.append_err(
+                    "Action cancelled — sudo password not provided."
+                )
                 return
+            sudo_password = pw.encode()
 
         # Show the confirmation dialog
         dlg = PreActionDialog(action_type, name, cmd, self)
@@ -1844,7 +2179,7 @@ class FindingsTable(QWidget, WorkerMixin):
         }
 
         # Run the command in a background thread
-        w = CommandWorker(cmd.split(), sudo=True)
+        w = CommandWorker(cmd.split(), sudo=True, password=sudo_password)
         w.output_ready.connect(lambda t: self.terminal.append(t, T["OK"]))
         w.error_ready.connect(self.terminal.append_err)
         w.finished_ok.connect(lambda: self._verify(cmd, name, risk, entry))
@@ -1895,6 +2230,7 @@ class FindingsTable(QWidget, WorkerMixin):
     def _remove_finding_and_update_score(self, name, risk):
         """Remove a finding row from the table and reduce the risk score."""
         # Find and remove the row
+        self._drop_seen_name(name)
         for r in range(self.table.rowCount() - 1, -1, -1):
             item = self.table.item(r, 0)
             if item and item.text() == name:
@@ -1907,8 +2243,21 @@ class FindingsTable(QWidget, WorkerMixin):
     def clear_findings(self):
         """Clear all findings and reset the risk score to zero."""
         self.table.setRowCount(0)
+        self._seen_findings.clear()
         RISK.clear()
         self.score_changed.emit()
+        self._ok_banner.setVisible(False)
+
+    def show_all_ok_banner(self):
+        """Show the green 'all looks well' banner if no HIGH/MEDIUM findings.
+        RISK.findings is a flat list of strings e.g. ["HIGH", "LOW", "MEDIUM"]."""
+        has_bad = "HIGH" in RISK.findings or "MEDIUM" in RISK.findings
+        if not has_bad:
+            self._ok_banner.setVisible(True)
+
+    def hide_all_ok_banner(self):
+        """Hide the all-ok banner — called when a bad finding is added."""
+        self._ok_banner.setVisible(False)
 
     def _filter_rows(self, text):
         """Show only rows where any column contains the search text."""
@@ -2027,7 +2376,7 @@ def run_quick_checks(terminal, findings):
         (
             "SSH PasswordAuthentication disabled",
             ["grep", "-i", "PasswordAuthentication", "/etc/ssh/sshd_config"],
-            lambda o: "yes" not in o.lower(),
+            lambda o: bool(re.search(r"(?im)^\s*PasswordAuthentication\s+no\b", o)),
             "Edit /etc/ssh/sshd_config → PasswordAuthentication no  (set up SSH keys first!)",
             "Forces key-based SSH login. Keys cannot be brute-forced like passwords."
         ),
@@ -2040,8 +2389,8 @@ def run_quick_checks(terminal, findings):
         ),
         (
             "Fail2ban is installed and running",
-            ["which", "fail2ban-server"],
-            lambda o: bool(o.strip()),
+            ["systemctl", "is-active", "fail2ban"],
+            lambda o: "active" in o.lower(),
             "sudo apt install fail2ban  — works automatically after install",
             "Blocks IPs that repeatedly fail login attempts. Stops brute-force attacks cold."
         ),
@@ -2139,23 +2488,89 @@ class GuidedWizard(QDialog, WorkerMixin):
         self.stack = QStackedWidget()
         layout.addWidget(self.stack)
 
-        # Define the available fixes
+        # Define the available fixes: (name, fix_fn, check_fn, meta)
         self.fixes = [
-            ("Enable UFW Firewall",            self._fix_ufw),
-            ("Install and Start Fail2ban",     self._fix_fail2ban),
-            ("Harden SSH Configuration",       self._fix_ssh),
-            ("Enable Auto Security Updates",   self._fix_autoupdate),
-            ("Restrict Core Dumps",            self._fix_coredump),
+            ("Enable UFW Firewall", self._fix_ufw, self._check_ufw, {
+                "what": "Turns on a host firewall with deny-by-default inbound policy.",
+                "helps": "Reduces attack surface by blocking unsolicited inbound connections.",
+                "overhead": "Low CPU/RAM impact; may require opening ports for services you intentionally run.",
+            }),
+            ("Install and Start Fail2ban", self._fix_fail2ban, self._check_fail2ban, {
+                "what": "Installs a daemon that watches auth logs and temporarily bans abusive IPs.",
+                "helps": "Slows or stops brute-force login attempts against SSH and similar services.",
+                "overhead": "Low overhead; can occasionally ban legitimate repeated failed logins (ban expires).",
+            }),
+            ("Harden SSH Configuration", self._fix_ssh, self._check_ssh, {
+                "what": "Disables root SSH login and disables password-based SSH auth.",
+                "helps": "Prevents high-risk root remote auth and blocks password brute-force vectors.",
+                "overhead": "Requires SSH keys to be set up first; misconfiguration can lock out remote access.",
+            }),
+            ("Enable Auto Security Updates", self._fix_autoupdate, self._check_autoupdate, {
+                "what": "Installs and enables unattended security patching.",
+                "helps": "Closes known vulnerabilities faster without relying on manual updates.",
+                "overhead": "Small background network/disk usage; rare package regressions after updates.",
+            }),
+            ("Restrict Core Dumps", self._fix_coredump, self._check_coredump, {
+                "what": "Prevents privileged process memory dumps from being written to disk.",
+                "helps": "Protects sensitive data (keys/tokens/passwords) from crash dump exposure.",
+                "overhead": "Reduces post-crash forensic detail for privileged process debugging.",
+            }),
+            ("Harden Kernel Settings", self._fix_kernel, self._check_kernel, {
+                "what": "Restricts kernel log access, hides kernel memory addresses, and limits process debugging.",
+                "helps": "Makes it significantly harder for malware to gather information needed to exploit your system.",
+                "overhead": "None for normal desktop use. Only affects kernel debugging tools.",
+            }),
+            ("Harden Network Stack", self._fix_network, self._check_network, {
+                "what": "Enables SYN flood protection, disables ICMP redirects, enables IP spoofing protection, and blocks source routing.",
+                "helps": "Hardens your network against common attack vectors like spoofing, flooding, and man-in-the-middle.",
+                "overhead": "None for desktop use. These are CIS Level 1 workstation recommendations.",
+            }),
+            ("Block Uncommon Network Protocols", self._fix_protocols, self._check_protocols, {
+                "what": "Prevents loading kernel modules for DCCP, SCTP, RDS, and TIPC — obscure protocols with repeated vulnerabilities.",
+                "helps": "Removes attack surface. If the vulnerable code cannot load, it cannot be exploited.",
+                "overhead": "None. These protocols are used in telecoms and clustering, never on a desktop.",
+            }),
+            ("Block Uncommon Filesystems", self._fix_filesystems, self._check_filesystems, {
+                "what": "Prevents loading kernel modules for cramfs, freevxfs, hfs, hfsplus, and jffs2.",
+                "helps": "A malicious USB drive formatted with one of these rare filesystems cannot trigger vulnerable parsing code.",
+                "overhead": "None unless you mount macOS-formatted drives (hfs/hfsplus).",
+            }),
+            ("Block FireWire / Thunderbolt DMA", self._fix_dma, self._check_dma, {
+                "what": "Prevents loading FireWire and Thunderbolt modules to block Direct Memory Access attacks.",
+                "helps": "Stops physical-access attackers from plugging in a device that reads your RAM directly, bypassing all software security.",
+                "overhead": "Do NOT apply if you use a Thunderbolt dock, external GPU, or Thunderbolt display.",
+            }),
+            ("Enable AppArmor", self._fix_apparmor, self._check_apparmor, {
+                "what": "Installs and enables AppArmor, Ubuntu's built-in application sandboxing system.",
+                "helps": "Confines programs to pre-defined profiles so that even if one is compromised, it cannot access files or resources outside those profiles.",
+                "overhead": "None for normal desktop use. AppArmor is enabled by default on Ubuntu; this ensures it is installed and running.",
+            }),
+            ("Disable Ctrl+Alt+Del Reboot", self._fix_cad, self._check_cad, {
+                "what": "Masks the ctrl-alt-del.target so pressing Ctrl+Alt+Del from a text console will not reboot the machine.",
+                "helps": "Prevents accidental or malicious reboots by anyone with physical keyboard access at a TTY.",
+                "overhead": "You lose the text-console Ctrl+Alt+Del shortcut. Graphical desktop shortcuts are unaffected.",
+            }),
         ]
 
         # ── Page 0: Fix selection list ──
         sel_page = QWidget()
         sl = QVBoxLayout(sel_page)
         sl.addWidget(QLabel("Select a security fix to walk through:"))
+        legend = QLabel("✅ = already configured    ⚠️ = not yet configured")
+        legend.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs(-2)}px;")
+        sl.addWidget(legend)
         self.fix_list = QListWidget()
-        for name, _ in self.fixes:
-            self.fix_list.addItem(name)
-        # Only switch to detail page when user explicitly clicks — not on populate
+        for name, _, check_fn, meta in self.fixes:
+            done = check_fn()
+            prefix = "✅  " if done else "⚠️  "
+            item = QListWidgetItem(f"{prefix}{name}")
+            item.setData(Qt.ItemDataRole.UserRole, done)
+            item.setToolTip(
+                f"What: {meta['what']}\n"
+                f"Helps: {meta['helps']}\n"
+                f"Overhead: {meta['overhead']}"
+            )
+            self.fix_list.addItem(item)
         self.fix_list.itemClicked.connect(self._on_item_clicked)
         sl.addWidget(self.fix_list)
         self.stack.addWidget(sel_page)
@@ -2168,15 +2583,18 @@ class GuidedWizard(QDialog, WorkerMixin):
             f"color:{T['ACCENT']};font-size:{fs(1)}px;font-weight:bold;"
         )
         dl.addWidget(self.fix_title)
+        self.fix_status = QLabel("")
+        self.fix_status.setWordWrap(True)
+        dl.addWidget(self.fix_status)
         self.fix_content = QTextEdit()
         self.fix_content.setReadOnly(True)
         dl.addWidget(self.fix_content)
-        run_btn = QPushButton("▶  RUN THIS FIX NOW")
-        run_btn.setObjectName("ok")
-        run_btn.setFixedHeight(40)
-        run_btn.setToolTip("Runs all steps above with sudo — asks for confirmation")
-        run_btn.clicked.connect(self._run_fix)
-        dl.addWidget(run_btn)
+        self.run_btn = QPushButton("▶  RUN THIS FIX NOW")
+        self.run_btn.setObjectName("ok")
+        self.run_btn.setFixedHeight(40)
+        self.run_btn.setToolTip("Runs all steps above with sudo — asks for confirmation")
+        self.run_btn.clicked.connect(self._run_fix)
+        dl.addWidget(self.run_btn)
         back_btn = QPushButton("← BACK TO LIST")
         back_btn.setObjectName("neutral")
         back_btn.setFixedHeight(32)
@@ -2194,12 +2612,29 @@ class GuidedWizard(QDialog, WorkerMixin):
         idx = self.fix_list.row(item)
         if idx < 0 or idx >= len(self.fixes):
             return
-        name, fn = self.fixes[idx]
+        name, fn, _check_fn, meta = self.fixes[idx]
+        done = item.data(Qt.ItemDataRole.UserRole)
         self.fix_title.setText(name)
+        if done:
+            self.fix_status.setText("✅ Already configured — your system already has this protection.")
+            self.fix_status.setStyleSheet(f"color:{T['OK']};font-weight:bold;font-size:{fs(0)}px;padding:4px;")
+            self.run_btn.setText("▶  RE-APPLY THIS FIX")
+        else:
+            self.fix_status.setText("⚠️ Not yet configured — review the steps below, then click RUN.")
+            self.fix_status.setStyleSheet(f"color:{T['WARN']};font-weight:bold;font-size:{fs(0)}px;padding:4px;")
+            self.run_btn.setText("▶  RUN THIS FIX NOW")
         steps, cmds = fn()
         self._cmds = cmds
-        self.fix_content.setPlainText(
-            "\n".join(f"Step {i+1}:\n{s}\n" for i, s in enumerate(steps))
+        steps_html = "".join(
+            f"<p><b>Step {i+1}:</b><br>{html.escape(s)}</p>"
+            for i, s in enumerate(steps)
+        )
+        self.fix_content.setHtml(
+            f"<p><b>What this changes:</b><br>{html.escape(meta['what'])}</p>"
+            f"<p><b>How this helps security:</b><br>{html.escape(meta['helps'])}</p>"
+            f"<p><b>Overheads / tradeoffs:</b><br>{html.escape(meta['overhead'])}</p>"
+            f"<hr><p><b>Execution steps:</b></p>"
+            f"{steps_html}"
         )
         self.stack.setCurrentIndex(1)
 
@@ -2214,8 +2649,16 @@ class GuidedWizard(QDialog, WorkerMixin):
         ) != QMessageBox.StandardButton.Yes:
             return
         for cmd in self._cmds:
-            self.terminal.append_cmd(f"sudo {cmd}")
-            w = CommandWorker(cmd.split(), sudo=True, timeout=120)
+            # cmd may be a pre-split list (for commands with shell syntax)
+            # or a plain string (split on whitespace for simple commands)
+            if isinstance(cmd, list):
+                cmd_list = cmd
+                cmd_str  = " ".join(cmd)
+            else:
+                cmd_list = cmd.split()
+                cmd_str  = cmd
+            self.terminal.append_cmd(f"sudo {cmd_str}")
+            w = CommandWorker(cmd_list, sudo=True, timeout=120)
             w.output_ready.connect(lambda t: self.terminal.append(t, T["OK"]))
             w.error_ready.connect(self.terminal.append_err)
             self._start_worker(w)
@@ -2277,8 +2720,184 @@ class GuidedWizard(QDialog, WorkerMixin):
                 "Prevent privileged programs from writing their memory to disk when they crash.",
                 "Apply the change immediately — no reboot needed.",
             ],
-            ["sh -c \"echo 'fs.suid_dumpable=0' >> /etc/sysctl.conf\"", "sysctl -p"]
+            [["sh", "-c", "echo fs.suid_dumpable=0 >> /etc/sysctl.conf"], "sysctl -p"]
         )
+
+    def _fix_kernel(self):
+        return (
+            [
+                "Restrict kernel log access (dmesg) — non-root users cannot read kernel messages that might reveal security details.",
+                "Hide kernel memory addresses — makes it much harder for attackers to craft targeted exploits.",
+                "Restrict process debugging (ptrace) — prevents malware from attaching to and reading memory of your browser or password manager.",
+                "Apply all changes immediately — no reboot needed.",
+            ],
+            [
+                ["sh", "-c", "printf 'kernel.dmesg_restrict=1\\nkernel.kptr_restrict=2\\nkernel.yama.ptrace_scope=1\\n' > /etc/sysctl.d/99-kernel-hardening.conf"],
+                "sysctl -p /etc/sysctl.d/99-kernel-hardening.conf",
+            ]
+        )
+
+    def _fix_network(self):
+        return (
+            [
+                "Enable SYN flood protection — uses cryptographic cookies to handle connection floods without exhausting your system.",
+                "Disable ICMP redirects — prevents other machines on your network from rerouting your traffic through them.",
+                "Enable reverse path filtering — drops network packets with forged source addresses.",
+                "Disable source routing — prevents attackers from dictating how packets travel through the network.",
+                "Apply all changes immediately — no reboot needed.",
+            ],
+            [
+                ["sh", "-c", "printf '"
+                 "net.ipv4.tcp_syncookies=1\\n"
+                 "net.ipv4.conf.all.accept_redirects=0\\n"
+                 "net.ipv4.conf.default.accept_redirects=0\\n"
+                 "net.ipv4.conf.all.send_redirects=0\\n"
+                 "net.ipv4.conf.default.send_redirects=0\\n"
+                 "net.ipv6.conf.all.accept_redirects=0\\n"
+                 "net.ipv6.conf.default.accept_redirects=0\\n"
+                 "net.ipv4.conf.all.rp_filter=1\\n"
+                 "net.ipv4.conf.default.rp_filter=1\\n"
+                 "net.ipv4.conf.all.accept_source_route=0\\n"
+                 "net.ipv4.conf.default.accept_source_route=0\\n"
+                 "net.ipv6.conf.all.accept_source_route=0\\n"
+                 "net.ipv6.conf.default.accept_source_route=0\\n"
+                 "' > /etc/sysctl.d/99-network-hardening.conf"],
+                "sysctl -p /etc/sysctl.d/99-network-hardening.conf",
+            ]
+        )
+
+    def _fix_protocols(self):
+        return (
+            [
+                "Block DCCP, SCTP, RDS, and TIPC kernel modules — obscure network protocols with a history of security vulnerabilities that no desktop user needs.",
+                "Takes effect for future module loads. Already-loaded modules are not affected until next reboot.",
+            ],
+            [
+                ["sh", "-c", "printf 'install dccp /bin/false\\ninstall sctp /bin/false\\ninstall rds /bin/false\\ninstall tipc /bin/false\\n' > /etc/modprobe.d/uncommon-network.conf"],
+            ]
+        )
+
+    def _fix_filesystems(self):
+        return (
+            [
+                "Block cramfs, freevxfs, hfs, hfsplus, and jffs2 kernel modules — rare filesystem types with known parsing vulnerabilities.",
+                "A malicious USB drive formatted with one of these filesystems cannot trigger the vulnerable code if the module is blocked.",
+            ],
+            [
+                ["sh", "-c", "printf 'install cramfs /bin/false\\ninstall freevxfs /bin/false\\ninstall hfs /bin/false\\ninstall hfsplus /bin/false\\ninstall jffs2 /bin/false\\n' > /etc/modprobe.d/uncommon-filesystems.conf"],
+            ]
+        )
+
+    def _fix_dma(self):
+        return (
+            [
+                "Block FireWire kernel modules — FireWire ports allow Direct Memory Access, letting a plugged-in device read your entire system RAM.",
+                "Block Thunderbolt module — same DMA risk. WARNING: Skip this if you use a Thunderbolt dock, external GPU, or Thunderbolt display!",
+                "Takes effect for future module loads. Already-loaded modules are not affected until next reboot.",
+            ],
+            [
+                ["sh", "-c", "printf 'install firewire-core /bin/false\\ninstall firewire-ohci /bin/false\\ninstall thunderbolt /bin/false\\n' > /etc/modprobe.d/blacklist-dma.conf"],
+            ]
+        )
+
+    def _fix_apparmor(self):
+        return (
+            [
+                "Install AppArmor and its command-line utilities (aa-status, aa-enforce).",
+                "Enable the AppArmor service so it starts on every boot.",
+                "Start AppArmor now without needing a reboot.",
+            ],
+            [
+                "apt install -y apparmor apparmor-utils",
+                "systemctl enable apparmor",
+                "systemctl start apparmor",
+            ]
+        )
+
+    def _fix_cad(self):
+        return (
+            [
+                "Mask the ctrl-alt-del.target systemd unit so pressing Ctrl+Alt+Del from a text console does nothing.",
+            ],
+            ["systemctl mask ctrl-alt-del.target"]
+        )
+
+    # ── Status check helpers ─────────────────────────────────────────────────
+    @staticmethod
+    def _run_check(cmd, pass_fn):
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=3,
+                               stdin=subprocess.DEVNULL)
+            return pass_fn(r.stdout + r.stderr)
+        except Exception:
+            return False
+
+    def _check_ufw(self):
+        # `systemctl is-active` prints exactly "active" when up; "inactive" contains
+        # the substring "active", so use exact match on stripped output.
+        return self._run_check(["systemctl", "is-active", "ufw"],
+                               lambda o: o.strip() == "active")
+
+    def _check_fail2ban(self):
+        return self._run_check(["systemctl", "is-active", "fail2ban"],
+                               lambda o: o.strip() == "active")
+
+    def _check_ssh(self):
+        # Use anchored regexes so commented-out lines and loose substrings don't match.
+        root_ok = self._run_check(
+            ["grep", "-i", "PermitRootLogin", "/etc/ssh/sshd_config"],
+            lambda o: bool(re.search(r"(?im)^\s*PermitRootLogin\s+(no|prohibit-password)\b", o)))
+        pw_ok = self._run_check(
+            ["grep", "-i", "PasswordAuthentication", "/etc/ssh/sshd_config"],
+            lambda o: bool(re.search(r"(?im)^\s*PasswordAuthentication\s+no\b", o)))
+        return root_ok and pw_ok
+
+    def _check_autoupdate(self):
+        return self._run_check(["dpkg", "-l", "unattended-upgrades"],
+                               lambda o: "ii" in o)
+
+    def _check_coredump(self):
+        return self._run_check(["sysctl", "fs.suid_dumpable"],
+                               lambda o: "= 0" in o)
+
+    def _check_kernel(self):
+        return (
+            self._run_check(["sysctl", "kernel.dmesg_restrict"], lambda o: "= 1" in o) and
+            self._run_check(["sysctl", "kernel.kptr_restrict"], lambda o: "= 2" in o) and
+            self._run_check(["sysctl", "kernel.yama.ptrace_scope"], lambda o: "= 1" in o))
+
+    def _check_network(self):
+        # Covers every sysctl _fix_network writes — IPv4 core set plus IPv6 redirects
+        # and source-route denial. Keeps the ✅ badge honest after the fix runs.
+        return (
+            self._run_check(["sysctl", "net.ipv4.tcp_syncookies"], lambda o: "= 1" in o) and
+            self._run_check(["sysctl", "net.ipv4.conf.all.accept_redirects"], lambda o: "= 0" in o) and
+            self._run_check(["sysctl", "net.ipv4.conf.all.rp_filter"], lambda o: "= 1" in o) and
+            self._run_check(["sysctl", "net.ipv4.conf.all.accept_source_route"], lambda o: "= 0" in o) and
+            self._run_check(["sysctl", "net.ipv6.conf.all.accept_redirects"], lambda o: "= 0" in o) and
+            self._run_check(["sysctl", "net.ipv6.conf.all.accept_source_route"], lambda o: "= 0" in o))
+
+    def _check_protocols(self):
+        return self._run_check(["modprobe", "-n", "-v", "dccp"],
+                               lambda o: "install /bin/false" in o or "install /bin/true" in o)
+
+    def _check_filesystems(self):
+        return self._run_check(["modprobe", "-n", "-v", "cramfs"],
+                               lambda o: "install /bin/false" in o or "install /bin/true" in o)
+
+    def _check_dma(self):
+        return self._run_check(["modprobe", "-n", "-v", "firewire-core"],
+                               lambda o: "install /bin/false" in o or "install /bin/true" in o)
+
+    def _check_apparmor(self):
+        return self._run_check(["systemctl", "is-active", "apparmor"],
+                               lambda o: o.strip() == "active")
+
+    def _check_cad(self):
+        # `systemctl is-enabled ctrl-alt-del.target` prints "masked" when masked,
+        # "alias" in the default state, etc. Match on the first token only.
+        return self._run_check(["systemctl", "is-enabled", "ctrl-alt-del.target"],
+                               lambda o: o.strip().startswith("masked"))
 
 
 # ── Dedicated Lynis output panel ──────────────────────────────────────────────
@@ -2336,7 +2955,26 @@ class LynisPanel(QWidget, WorkerMixin):
         self.output.setTextCursor(cur)
         self.output.ensureCursorVisible()
 
-    def run_lynis(self):
+    def _get_sudo_password(self, reason_text, force_prompt=False):
+        """
+        Return sudo password bytes if needed, b'' if cached, or None if cancelled.
+        If force_prompt=True, always show the password dialog in the foreground.
+        """
+        if not force_prompt and check_sudo_cached():
+            return b""
+        pw, ok = QInputDialog.getText(
+            self,
+            "Administrator Password Required",
+            f"{reason_text}\n\nYour password is used once and never stored.",
+            QLineEdit.EchoMode.Password,
+        )
+        if not ok or not pw:
+            self.status.setText("Action cancelled.")
+            self.terminal.append_err("Action cancelled — sudo password not provided.")
+            return None
+        return pw.encode()
+
+    def run_lynis(self, on_complete=None):
         """Check if Lynis is installed, offer to install it, then run the audit."""
         if not shutil.which("lynis"):
             reply = QMessageBox.question(
@@ -2345,12 +2983,30 @@ class LynisPanel(QWidget, WorkerMixin):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
             if reply == QMessageBox.StandardButton.Yes:
+                sudo_password = self._get_sudo_password(
+                    "Installing Lynis requires your sudo (administrator) password.",
+                    force_prompt=True
+                )
+                if sudo_password is None:
+                    return
                 self.status.setText("Installing Lynis...")
-                w = CommandWorker(["apt", "install", "lynis", "-y"], sudo=True, timeout=120)
+                w = CommandWorker(
+                    ["apt", "install", "lynis", "-y"],
+                    sudo=True,
+                    timeout=120,
+                    password=sudo_password
+                )
                 w.output_ready.connect(lambda t: self.terminal.append(t, T["OK"]))
                 w.error_ready.connect(self.terminal.append_err)
-                w.finished_ok.connect(self.run_lynis)  # Retry after install
+                w.finished_ok.connect(lambda: self.run_lynis(on_complete=on_complete))  # Retry after install
                 self._start_worker(w)
+            return
+
+        sudo_password = self._get_sudo_password(
+            "Running a Lynis audit requires your sudo (administrator) password.",
+            force_prompt=True
+        )
+        if sudo_password is None:
             return
 
         self.output.clear()
@@ -2359,10 +3015,17 @@ class LynisPanel(QWidget, WorkerMixin):
         self._lappend("Running Lynis security audit...", T["ACCENT"])
         self._lappend("This checks your system against security best practices.\n", T["TEXT_DIM"])
 
-        w = CommandWorker(["lynis", "audit", "system", "--quick"], sudo=True, timeout=200)
+        w = CommandWorker(
+            ["lynis", "audit", "system", "--quick"],
+            sudo=True,
+            timeout=200,
+            password=sudo_password
+        )
         w.output_ready.connect(self._parse_lynis_output)
         w.error_ready.connect(lambda t: self._lappend(t, T["DANGER"]))
         w.finished_ok.connect(lambda: self.status.setText("Lynis audit complete — see results above."))
+        if on_complete:
+            w.finished_ok.connect(on_complete)
         self._start_worker(w)
 
     def _parse_lynis_output(self, text):
@@ -2417,23 +3080,43 @@ class LynisPanel(QWidget, WorkerMixin):
 
         except FileNotFoundError:
             pass  # Log file not available — fall back to parsing raw output
+        except PermissionError:
+            # Common when app is not run as root — not an app fault.
+            self._lappend(
+                "  ℹ  Could not read /var/log/lynis.log (permission denied). "
+                "Parsing live output instead.",
+                T["TEXT_DIM"]
+            )
         except Exception as e:
             logging.error(f"Lynis log parse error: {e}")
 
         # Fallback: parse the raw output text
         warn_count = 0
+        sugg_count = 0
+        summary_warns = None
+        summary_suggs = None
         for line in text.splitlines():
             clean = strip_ansi(line).strip()
             if not clean:
                 continue
-            if "Warning" in clean:
+            mw = re.search(r"\bWarnings?\b\s*[:=]\s*(\d+)", clean, re.I)
+            if mw:
+                summary_warns = int(mw.group(1))
+            ms = re.search(r"\bSuggestions?\b\s*[:=]\s*(\d+)", clean, re.I)
+            if ms:
+                summary_suggs = int(ms.group(1))
+
+            # Treat explicit warning lines as findings (case-insensitive).
+            # Skip summary counter lines like "Warnings : 5".
+            if re.search(r"\bwarning\b", clean, re.I) and not mw:
                 self._lappend(f"  ⚠  {clean}", T["WARN"])
                 warn_count += 1
                 self.findings.add_finding(
                     clean[:60], "HARDENING", "MEDIUM", clean
                 )
-            elif "Suggestion" in clean or clean.startswith("ℹ"):
+            elif re.search(r"\bsuggestion\b", clean, re.I) and not ms:
                 self._lappend(f"  ℹ  {clean}", T["TEXT_DIM"])
+                sugg_count += 1
             # Try to extract hardening index from raw output
             m = re.search(r"Hardening index\s*[:\|]\s*(\d+)", clean, re.I)
             if m:
@@ -2441,8 +3124,15 @@ class LynisPanel(QWidget, WorkerMixin):
                 colour = T["OK"] if idx > 70 else (T["WARN"] if idx > 40 else T["DANGER"])
                 self._lappend(f"\n  Lynis Hardening Index: {idx} / 100", colour)
 
-        self._lappend(f"\n── {warn_count} warnings found ──", T["ACCENT"])
-        SESSION.log_scan("Lynis Full Audit", warn_count)
+        final_warns = summary_warns if summary_warns is not None else warn_count
+        final_suggs = summary_suggs if summary_suggs is not None else sugg_count
+        if summary_warns is not None and warn_count == 0 and summary_warns > 0:
+            self._lappend(
+                "  ℹ  Lynis reported warnings in summary; detailed warning lines were not exposed in live output.",
+                T["TEXT_DIM"]
+            )
+        self._lappend(f"\n── WARNINGS ({final_warns}) | SUGGESTIONS ({final_suggs}) ──", T["ACCENT"])
+        SESSION.log_scan("Lynis Full Audit", final_warns)
 
 
 # ── Dedicated CVE results panel ───────────────────────────────────────────────
@@ -2464,6 +3154,15 @@ class CvePanel(QWidget, WorkerMixin):
         self._init_workers()
         self.terminal = terminal
         self.findings = findings
+        self._scan_cve_done_cb = None
+        self._scan_upgrades_done_cb = None
+        self._cve_scan_serial = 0
+        self._cve_active_scan_id = 0
+        self._cve_total = 0
+        self._cve_ok = 0
+        self._cve_timeout = 0
+        self._cve_network = 0
+        self._cve_error = 0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -2492,13 +3191,13 @@ class CvePanel(QWidget, WorkerMixin):
             ["PACKAGE", "YOUR VERSION", "CVE COUNT", "HIGHEST SEVERITY"]
         )
         ch = self.cve_table.horizontalHeader()
-        for i, mode in enumerate([
-            QHeaderView.ResizeMode.ResizeToContents,
-            QHeaderView.ResizeMode.ResizeToContents,
-            QHeaderView.ResizeMode.ResizeToContents,
-            QHeaderView.ResizeMode.Stretch,
-        ]):
-            ch.setSectionResizeMode(i, mode)
+        for i in range(4):
+            ch.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
+        self.cve_table.setColumnWidth(0, 220)
+        self.cve_table.setColumnWidth(1, 260)
+        self.cve_table.setColumnWidth(2, 120)
+        self.cve_table.setColumnWidth(3, 260)
+        ch.setStretchLastSection(False)
         self.cve_table.verticalHeader().setVisible(False)
         self.cve_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.cve_table.setAlternatingRowColors(True)
@@ -2518,8 +3217,12 @@ class CvePanel(QWidget, WorkerMixin):
         except Exception:
             return None
 
-    def scan_cve(self):
+    def scan_cve(self, on_complete=None):
         """Find installed packages and check them against the CVE database."""
+        self._scan_cve_done_cb = on_complete
+        self._cve_scan_serial += 1
+        scan_id = self._cve_scan_serial
+        self._cve_active_scan_id = scan_id
         self.cve_table.setRowCount(0)
         self.status.setText("Finding installed packages to check...")
         self.terminal.append_cmd("# CVE check — querying Ubuntu security database")
@@ -2534,28 +3237,49 @@ class CvePanel(QWidget, WorkerMixin):
             self.status.setText("No packages found to check on this system.")
             return
 
+        self._cve_total = len(targets)
+        self._cve_ok = 0
+        self._cve_timeout = 0
+        self._cve_network = 0
+        self._cve_error = 0
+
         self.status.setText(
             f"Querying CVE database for {len(targets)} packages — please wait..."
         )
         self.terminal.append_info(f"Checking {len(targets)} packages...")
 
         w = HttpWorker(targets)
-        w.result_ready.connect(self._handle_cve_result)
-        w.finished_ok.connect(
-            lambda: self.status.setText(
-                f"CVE check complete — {len(targets)} packages checked."
-            )
+        w.result_ready.connect(
+            lambda pkg, data, sid=scan_id: self._handle_cve_result(pkg, data, sid)
         )
+        w.finished_ok.connect(lambda sid=scan_id: self._finish_cve_scan(sid))
         self._start_worker(w)
         SESSION.log_scan("CVE Vulnerability Check", 0)
 
-    def _handle_cve_result(self, pkg, data):
+    def _handle_cve_result(self, pkg, data, scan_id):
         """Process one package's CVE results and add to the table."""
+        if scan_id != self._cve_active_scan_id:
+            return
         if data is None:
+            self._cve_error += 1
             self.terminal.append_info(f"Could not check: {pkg}")
             return
 
         version, cve_data = data
+        if isinstance(cve_data, dict) and cve_data.get("_error"):
+            err = cve_data.get("_error")
+            if err == "timeout":
+                self._cve_timeout += 1
+                self.terminal.append_info(f"Could not check: {pkg} (network timeout)")
+            elif err == "network":
+                self._cve_network += 1
+                self.terminal.append_info(f"Could not check: {pkg} (network unavailable)")
+            else:
+                self._cve_error += 1
+                self.terminal.append_info(f"Could not check: {pkg} (request failed)")
+            return
+
+        self._cve_ok += 1
         cves    = cve_data.get("cves", [])
         count   = len(cves)
         highest = "none"
@@ -2602,22 +3326,68 @@ class CvePanel(QWidget, WorkerMixin):
                 f"{pkg} ({version}): {count} CVEs — highest: {highest.upper()}"
             )
 
-    def scan_upgrades(self):
-        """Check which packages have newer versions available."""
+    def _finish_cve_scan(self, scan_id):
+        """Show clearer completion summary including failure reasons."""
+        if scan_id != self._cve_active_scan_id:
+            return
+        total = max(1, self._cve_total)
+        failed = self._cve_total - self._cve_ok
+        self.status.setText(
+            f"CVE check complete — {self._cve_ok}/{self._cve_total} packages checked successfully."
+        )
+        if failed > 0:
+            self.terminal.append_info(
+                f"CVE check summary: {self._cve_ok}/{total} succeeded, {failed} failed "
+                f"(timeouts: {self._cve_timeout}, network: {self._cve_network}, other: {self._cve_error})."
+            )
+        if self._scan_cve_done_cb:
+            try:
+                self._scan_cve_done_cb()
+            finally:
+                self._scan_cve_done_cb = None
+
+    def cancel_active_scan(self):
+        """Invalidate current CVE scan and cancel in-flight HTTP workers."""
+        self._cve_scan_serial += 1
+        self._cve_active_scan_id = self._cve_scan_serial
+        for w in list(self._workers):
+            if isinstance(w, HttpWorker):
+                w.cancel()
+
+    def scan_upgrades(self, on_complete=None):
+        """Check which packages have newer versions available.
+        Uses DEBIAN_FRONTEND=noninteractive so apt never waits for user input."""
+        self._scan_upgrades_done_cb = on_complete
         self.terminal.append_cmd("apt list --upgradable")
         self.status.setText("Checking for available updates...")
 
-        w = CommandWorker(["apt", "list", "--upgradable"])
+        w = CommandWorker(
+            ["apt", "list", "--upgradable"],
+            env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+        )
         w.output_ready.connect(self._parse_upgrades)
         w.error_ready.connect(self.terminal.append_err)
         w.finished_ok.connect(lambda: self.status.setText("Update check complete."))
+        w.finished_ok.connect(self._finish_upgrades_scan)
         self._start_worker(w)
 
+    def _finish_upgrades_scan(self):
+        """Finalize updates scan callback."""
+        if self._scan_upgrades_done_cb:
+            try:
+                self._scan_upgrades_done_cb()
+            finally:
+                self._scan_upgrades_done_cb = None
+
     def _parse_upgrades(self, text):
-        """Parse apt upgrade output and add outdated packages to findings."""
+        """Parse apt upgrade output and add outdated packages to findings.
+        apt list --upgradable lines look like:
+          pkg/noble-updates 1.2.3 amd64 [upgradable from: 1.2.2]
+        The old filter excluded any line containing 'upgradable' which removed
+        every result. Now we skip only the plain 'Listing...' header line."""
         lines = [
             l for l in text.splitlines()
-            if "/" in l and "upgradable" not in l
+            if "/" in l and not l.startswith("Listing")
         ]
         self.terminal.append_info(f"{len(lines)} packages have updates available.")
         for line in lines[:30]:
@@ -2644,11 +3414,9 @@ class ToolCard(QFrame):
         self.terminal = terminal
         self._workers = set()
 
+        # Background/border handled via make_style() #tool_card — no inline style needed
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet(
-            f"background:{T['BG_CARD']};border:1px solid {T['BORDER']};"
-            f"border-radius:6px;margin:2px;"
-        )
+        self.setObjectName("tool_card")
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
@@ -2905,16 +3673,30 @@ class UndoPanel(QWidget, WorkerMixin):
             ["DATE & TIME", "ACTION TAKEN", "COMMAND RAN", "RISK LEVEL", "UNDO"]
         )
         hh = self.table.horizontalHeader()
-        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        hh.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        for col in range(5):
+            hh.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(0, 170)
+        self.table.setColumnWidth(1, 220)
+        self.table.setColumnWidth(2, 420)
+        self.table.setColumnWidth(3, 120)
+        self.table.setColumnWidth(4, 160)
+        hh.setStretchLastSection(False)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.cellClicked.connect(self._show_detail)
         layout.addWidget(self.table)
+
+        # Empty state label — shown when nothing has been done yet
+        self.empty_label = QLabel(
+            "No actions taken yet — actions appear here automatically as you fix things."
+        )
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_label.setStyleSheet(
+            f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;padding:32px;"
+        )
+        self.empty_label.setWordWrap(True)
+        layout.addWidget(self.empty_label)
 
         # Detail panel — expands when a row is clicked
         self.detail = QTextEdit()
@@ -2927,6 +3709,14 @@ class UndoPanel(QWidget, WorkerMixin):
 
         # Load previous session entries on startup
         self._load_previous_sessions()
+        # Show empty state if nothing loaded
+        self._update_empty_state()
+
+    def _update_empty_state(self):
+        """Show the empty-state label when the table has no rows, hide it otherwise."""
+        empty = self.table.rowCount() == 0
+        self.empty_label.setVisible(empty)
+        self.table.setVisible(not empty)
 
     def _load_previous_sessions(self):
         """Load undo entries from previous sessions (from disk)."""
@@ -3005,6 +3795,7 @@ class UndoPanel(QWidget, WorkerMixin):
         bl.addStretch()
         self.table.setCellWidget(row, 4, cell)
         self.table.setRowHeight(row, 38)
+        self._update_empty_state()
 
     def _show_detail(self, row, col):
         """Show the three-part rollback explanation when a row is clicked."""
@@ -3092,38 +3883,90 @@ class SideBar(QWidget, WorkerMixin):
         self.cve_panel   = cve_panel
         self.tools_panel = tools_panel
         self.undo_panel  = undo_panel
-        self.tabs        = tabs        # Reference to the main tab widget
+        self.stack       = tabs        # QStackedWidget: 0=findings,1=cve,2=lynis,3=tools,4=undo
         self.online_mode = online_mode
+        self._pending_section_action = None
+        self._section_headers = {}   # section_id -> (button, title_key)
+        self._section_done = {
+            "scan": set(),
+            "checks": set(),
+            "cve": set(),
+            "tools": set(),
+            "undo": set(),
+        }
+        self._section_required = {
+            "scan": {"unused", "network", "services", "os_installed", "user_installed"},
+            "checks": {"quick", "lynis", "wizard"},
+            "cve": {"cve", "upgrades"} if online_mode else set(),
+            "tools": {"tools"},
+            "undo": {"undo"},
+        }
 
-        self.setFixedWidth(240)
-        self.setStyleSheet(f"background:{T['SIDEBAR']};")
+        self.setFixedWidth(252)
+        self.setObjectName("sidebar_widget")
 
-        layout = QVBoxLayout(self)
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+
+        # Scrollable menu area so controls never overlap on smaller window heights
+        menu_scroll = QScrollArea()
+        menu_scroll.setWidgetResizable(True)
+        menu_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        menu_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        menu_host = QWidget()
+        layout = QVBoxLayout(menu_host)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        menu_scroll.setWidget(menu_host)
+        root_layout.addWidget(menu_scroll, 1)
 
-        # ── Helper: add a section header with title and subtitle ──
-        def section(title_key, sub_key):
-            w = QWidget()
-            w.setStyleSheet(
-                f"background:{T['BG_MID']};"
-                f"border-left:3px solid {T['ACCENT']};"
-                f"border-top:1px solid {T['BORDER']};"
-            )
-            vl = QVBoxLayout(w)
-            vl.setContentsMargins(8, 8, 8, 4)
-            vl.setSpacing(2)
-            tl = QLabel(L(title_key))
-            tl.setObjectName("section_title")
-            vl.addWidget(tl)
-            sl = QLabel(L(sub_key))
-            sl.setObjectName("section_sub")
-            sl.setWordWrap(True)
-            vl.addWidget(sl)
-            layout.addWidget(w)
+        # ── Helper: collapsible section header ───────────────────────────
+        def section(section_id, title_key, sub_key):
+            """Create a collapsible section. Starts collapsed on every app launch."""
+            is_expanded = False
 
-        # ── Helper: add a sidebar button with optional keyboard shortcut ──
-        def btn(label_key, tooltip, handler, style="section_btn", shortcut=None):
+            # Outer container holding header + content
+            outer = QWidget()
+            outer_l = QVBoxLayout(outer)
+            outer_l.setContentsMargins(0, 0, 0, 0)
+            outer_l.setSpacing(0)
+
+            # Header button (acts as a toggle) — styled via make_style() #section_btn
+            arrow   = "▼" if is_expanded else "▶"
+            hdr_btn = QPushButton(f"{arrow}  {L(title_key)}")
+            hdr_btn.setObjectName("section_btn")
+            sub_lbl = QLabel(L(sub_key))
+            sub_lbl.setObjectName("section_sub")
+            sub_lbl.setWordWrap(True)
+
+            # Content container — buttons go inside here
+            content   = QWidget()
+            content_l = QVBoxLayout(content)
+            content_l.setContentsMargins(0, 0, 0, 0)
+            content_l.setSpacing(0)
+            content.setVisible(is_expanded)
+            sub_lbl.setVisible(is_expanded)
+
+            def _toggle(_checked=False, _title=title_key, _btn=hdr_btn,
+                        _sub_lbl=sub_lbl, _content=content):
+                now_expanded = not _content.isVisible()
+                _content.setVisible(now_expanded)
+                _sub_lbl.setVisible(now_expanded)
+                self._update_section_header(section_id, now_expanded)
+
+            hdr_btn.clicked.connect(_toggle)
+            outer_l.addWidget(hdr_btn)
+            outer_l.addWidget(sub_lbl)
+            outer_l.addWidget(content)
+            layout.addWidget(outer)
+            self._section_headers[section_id] = (hdr_btn, title_key)
+            self._update_section_header(section_id, is_expanded)
+            return content_l
+
+        # ── Helper: add a button into a section content layout ────────────
+        def btn(label_key, tooltip, handler, parent_layout=None,
+                style="section_btn", shortcut=None):
             b = QPushButton(L(label_key))
             b.setObjectName(style)
             b.setFixedHeight(42)
@@ -3132,49 +3975,53 @@ class SideBar(QWidget, WorkerMixin):
             if shortcut:
                 b.setShortcut(QKeySequence(shortcut))
                 b.setToolTip(f"{tooltip} [{shortcut}]")
-            layout.addWidget(b)
+            target = parent_layout if parent_layout is not None else layout
+            target.addWidget(b)
             return b
 
         # ── SCAN YOUR SYSTEM ──────────────────────────────────────────────
-        section("sec_scan", "sec_scan_sub")
+        sec_scan = section("scan", "sec_scan", "sec_scan_sub")
         btn("btn_unused",
             "Finds software installed as part of something else that is now "
             "just sitting there — leftovers from old installs",
-            self._scan_unused, shortcut="Ctrl+1")
+            self._scan_unused, parent_layout=sec_scan, shortcut="Ctrl+1")
         btn("btn_network",
             "Shows every open network port and which program owns it",
-            self._scan_network, shortcut="Ctrl+2")
+            self._scan_network, parent_layout=sec_scan, shortcut="Ctrl+2")
         btn("btn_services",
             "Checks for known insecure or unnecessary services",
-            self._scan_services, shortcut="Ctrl+3")
-        btn("btn_installed",
-            "Lists every package currently installed on this system",
-            self._scan_installed)
+            self._scan_services, parent_layout=sec_scan, shortcut="Ctrl+3")
+        btn("btn_os_installed",
+            "Packages that came pre-installed with your OS — not installed by you",
+            self._scan_os_installed, parent_layout=sec_scan)
+        btn("btn_user_installed",
+            "Packages you deliberately installed — via apt install or a GUI store",
+            self._scan_user_installed, parent_layout=sec_scan)
         btn("btn_fullscan",
             "Runs all scans above in one go — the best place to start",
-            self._run_full_scan, style="ok", shortcut="Ctrl+R")
+            self._run_full_scan, parent_layout=sec_scan, style="ok", shortcut="Ctrl+R")
 
         # ── SECURITY CHECKS ───────────────────────────────────────────────
-        section("sec_checks", "sec_checks_sub")
+        sec_checks = section("checks", "sec_checks", "sec_checks_sub")
         btn("btn_quick",
             "Checks firewall, SSH, core dumps, ASLR — takes about 5 seconds",
-            self._quick_checks, shortcut="Ctrl+4")
+            self._quick_checks, parent_layout=sec_checks, shortcut="Ctrl+4")
         btn("btn_lynis",
             "Full industry-standard Lynis security audit — takes about 60 seconds",
-            self._run_lynis)
+            self._run_lynis, parent_layout=sec_checks)
         btn("btn_wizard",
             "Guided step-by-step walkthroughs for common security fixes",
-            self._guided_wizard)
+            self._guided_wizard, parent_layout=sec_checks)
 
         # ── CVE VULNERABILITY CHECK ───────────────────────────────────────
-        section("sec_cve", "sec_cve_sub")
+        sec_cve = section("cve", "sec_cve", "sec_cve_sub")
         if online_mode:
             btn("btn_cve",
                 "Checks installed packages against Ubuntu's live vulnerability database",
-                self._scan_cve, shortcut="Ctrl+5")
+                self._scan_cve, parent_layout=sec_cve, shortcut="Ctrl+5")
             btn("btn_upgrades",
                 "Shows packages that have newer versions available",
-                self._scan_upgrades)
+                self._scan_upgrades, parent_layout=sec_cve)
         else:
             # Offline mode — CVE checks need internet so just show a notice
             notice = QLabel(
@@ -3183,27 +4030,25 @@ class SideBar(QWidget, WorkerMixin):
             notice.setStyleSheet(
                 f"color:{T['TEXT_DIM']};font-size:{fs(-2)}px;padding:8px;"
             )
-            layout.addWidget(notice)
+            sec_cve.addWidget(notice)
 
         # ── RECOMMENDED TOOLS ─────────────────────────────────────────────
-        section("sec_tools", "sec_tools_sub")
+        sec_tools = section("tools", "sec_tools", "sec_tools_sub")
         btn("btn_tools",
             "Shows the 15 recommended security and monitoring tools",
-            self._show_tools)
+            self._show_tools, parent_layout=sec_tools)
 
         # ── UNDO / ROLLBACK ───────────────────────────────────────────────
-        section("sec_undo", "sec_undo_sub")
+        sec_undo = section("undo", "sec_undo", "sec_undo_sub")
         btn("btn_undo",
             "Shows everything this app has done and lets you reverse any action",
-            self._show_undo)
+            self._show_undo, parent_layout=sec_undo)
 
         layout.addStretch()
 
         # ── Machine info box at the bottom of the sidebar ──
         info_box = QWidget()
-        info_box.setStyleSheet(
-            f"background:{T['BG_CARD']};border-top:1px solid {T['BORDER']};"
-        )
+        info_box.setObjectName("sidebar_info_box")  # styled via make_style()
         il = QVBoxLayout(info_box)
         il.setContentsMargins(8, 6, 8, 6)
         il.setSpacing(2)
@@ -3249,35 +4094,80 @@ class SideBar(QWidget, WorkerMixin):
         )
         built.setWordWrap(True)
         il.addWidget(built)
-        layout.addWidget(info_box)
+        root_layout.addWidget(info_box, 0)
+
+    def _update_section_header(self, section_id, expanded):
+        """Refresh section header text with arrow + completion tick."""
+        ref = self._section_headers.get(section_id)
+        if not ref:
+            return
+        btn, title_key = ref
+        done = self._section_done.get(section_id, set())
+        req = self._section_required.get(section_id, set())
+        complete = bool(req) and req.issubset(done)
+        tick = " ✅" if complete else ""
+        btn.setText(f"{'▼' if expanded else '▶'}  {L(title_key)}{tick}")
+        if complete:
+            btn.setToolTip("Completed section")
+        elif req:
+            btn.setToolTip(f"Completed {len(done)}/{len(req)} actions in this section")
+
+    def _mark_section_action_done(self, section_id, action_id):
+        """Mark one action as completed and update section tick state."""
+        if section_id not in self._section_done:
+            return
+        self._section_done[section_id].add(action_id)
+        ref = self._section_headers.get(section_id)
+        if ref:
+            btn, _ = ref
+            expanded = "▼" in btn.text()
+            self._update_section_header(section_id, expanded)
 
     # ── Helper: clear findings and show "please wait" before a scan ──────
-    def _pre_scan(self, scan_name):
+    def _pre_scan(self, scan_name, section_id=None, action_id=None):
         """Clear results and show a 'Please wait' message before any scan."""
+        self._pending_section_action = (section_id, action_id) if section_id and action_id else None
+        # Cancel/invalidate any in-flight CVE scan so late network responses
+        # don't leak into the terminal during a different scan (e.g. Lynis).
+        if hasattr(self, "cve_panel"):
+            self.cve_panel.cancel_active_scan()
         self.findings.clear_findings()
         self.terminal.output.clear()
         self.terminal.append(
             f"⏳  Please wait — running: {scan_name}...", T["ACCENT"]
         )
-        # Switch to findings tab so user can see results populate
-        self.tabs.setCurrentIndex(0)
+        # Switch to the findings page so the user sees results populate
+        self.stack.setCurrentIndex(0)
 
-    def _run_cmd(self, cmd, label, on_output=None):
+    def _run_cmd(self, cmd, label, on_output=None, show_output=True):
         """Run a command in a background thread, output to terminal."""
         self.terminal.append_cmd(" ".join(cmd))
         w = CommandWorker(cmd)
-        w.output_ready.connect(lambda t: self.terminal.append(t))
+        if show_output:
+            w.output_ready.connect(lambda t: self.terminal.append(t))
         w.error_ready.connect(self.terminal.append_err)
         if on_output:
             w.output_ready.connect(on_output)
         w.finished_ok.connect(
             lambda: self.terminal.append_ok(f"{label} complete.")
         )
+        w.finished_ok.connect(self._post_scan_check)
         self._start_worker(w)
+
+    def _post_scan_check(self):
+        """After any scan completes, show the all-ok banner if nothing bad was found."""
+        if self._pending_section_action:
+            sec, act = self._pending_section_action
+            self._mark_section_action_done(sec, act)
+            self._pending_section_action = None
+        self.findings.show_all_ok_banner()
 
     # ── Scan: unused software ─────────────────────────────────────────────
     def _scan_unused(self):
-        self._pre_scan(L("btn_unused"))
+        self._pre_scan(L("btn_unused"), "scan", "unused")
+        self._do_scan_unused()
+
+    def _do_scan_unused(self):
         if not shutil.which("deborphan"):
             self.terminal.append_warn(
                 "deborphan is not installed. Install with: sudo apt install deborphan"
@@ -3316,7 +4206,10 @@ class SideBar(QWidget, WorkerMixin):
 
     # ── Scan: open ports ──────────────────────────────────────────────────
     def _scan_network(self):
-        self._pre_scan(L("btn_network"))
+        self._pre_scan(L("btn_network"), "scan", "network")
+        self._do_scan_network()
+
+    def _do_scan_network(self):
         self._run_cmd(["ss", "-tunlp"], "Network port scan", self._parse_network)
 
     def _parse_network(self, text):
@@ -3374,7 +4267,10 @@ class SideBar(QWidget, WorkerMixin):
 
     # ── Scan: risky services ──────────────────────────────────────────────
     def _scan_services(self):
-        self._pre_scan(L("btn_services"))
+        self._pre_scan(L("btn_services"), "scan", "services")
+        self._do_scan_services()
+
+    def _do_scan_services(self):
         # List of (name, type, risk, detail, remove_cmd, disable_cmd)
         RISKY_SVCS = [
             ("telnet",       "SERVICE","HIGH",  "Unencrypted remote shell — everything you type is visible on the network",                  "apt purge telnet",       None),
@@ -3402,10 +4298,11 @@ class SideBar(QWidget, WorkerMixin):
                 self.terminal.append_ok(f"{name} — not installed")
 
         SESSION.log_scan(L("btn_services"), found)
+        self._post_scan_check()
 
-    # ── Scan: all installed ───────────────────────────────────────────────
+    # ── Scan: all installed (legacy, kept for internal use) ──────────────
     def _scan_installed(self):
-        self._pre_scan(L("btn_installed"))
+        self._pre_scan(L("btn_installed"), "scan", "installed")
         if PKG_MGR == "apt":
             cmd = ["dpkg-query", "-W", "--showformat=${Package} ${Version}\n"]
         elif PKG_MGR == "dnf":
@@ -3414,62 +4311,137 @@ class SideBar(QWidget, WorkerMixin):
             cmd = ["pacman", "-Q"]
         self._run_cmd(cmd, "Installed package list")
 
+    # ── Scan: OS pre-installed (not in apt-mark showmanual) ───────────────
+    def _scan_os_installed(self):
+        """List packages that came with the OS — not explicitly installed by the user.
+        These are the difference between all packages and apt-mark showmanual output."""
+        self._pre_scan(L("btn_os_installed"), "scan", "os_installed")
+        if PKG_MGR != "apt":
+            self.terminal.append_warn("OS vs user split requires apt (not available on this system).")
+            return
+
+        def _parse_os(text):
+            """Cross-reference dpkg list with manual installs to find OS baseline."""
+            try:
+                manual_r = subprocess.run(
+                    ["apt-mark", "showmanual"],
+                    capture_output=True, text=True, timeout=10
+                )
+                manual = set(manual_r.stdout.strip().splitlines())
+            except Exception as e:
+                self.terminal.append_warn(f"apt-mark failed: {e}")
+                manual = set()
+
+            count = 0
+            self.findings.begin_bulk_update()
+            try:
+                for line in text.strip().splitlines():
+                    parts = line.strip().split()
+                    if len(parts) < 2:
+                        continue
+                    pkg, ver = parts[0], parts[1]
+                    if pkg not in manual:
+                        self.findings.add_finding(
+                            pkg, "LEFTOVER", "INFO",
+                            f"Pre-installed by OS (version {ver}) — not manually installed"
+                        )
+                        count += 1
+            finally:
+                self.findings.end_bulk_update()
+            SESSION.log_scan(L("btn_os_installed"), count)
+
+        cmd = ["dpkg-query", "-W", "--showformat=${Package} ${Version}\n"]
+        self.terminal.append_info("Gathering OS pre-installed package inventory...")
+        self._run_cmd(
+            cmd,
+            "OS pre-installed packages",
+            on_output=_parse_os,
+            show_output=False
+        )
+
+    # ── Scan: user installed (apt-mark showmanual) ────────────────────────
+    def _scan_user_installed(self):
+        """List packages the user deliberately installed — from apt-mark showmanual.
+        Each result has a REMOVE button so the user can clean up intentionally."""
+        self._pre_scan(L("btn_user_installed"), "scan", "user_installed")
+        if PKG_MGR != "apt":
+            self.terminal.append_warn("User-installed scan requires apt (not available on this system).")
+            return
+
+        def _parse_user(text):
+            count = 0
+            self.findings.begin_bulk_update()
+            try:
+                for line in text.strip().splitlines():
+                    pkg = line.strip()
+                    if not pkg or not valid_pkg(pkg):
+                        continue
+                    self.findings.add_finding(
+                        pkg, "LEFTOVER", "INFO",
+                        "Deliberately installed by you — safe to keep, safe to remove if no longer needed",
+                        " ".join(pkg_remove(pkg))
+                    )
+                    count += 1
+            finally:
+                self.findings.end_bulk_update()
+            SESSION.log_scan(L("btn_user_installed"), count)
+
+        self.terminal.append_info("Gathering user-installed package inventory...")
+        self._run_cmd(
+            ["apt-mark", "showmanual"],
+            "User-installed packages",
+            on_output=_parse_user,
+            show_output=False
+        )
+
     # ── Scan: full scan (all of the above) ────────────────────────────────
     def _run_full_scan(self):
-        self._pre_scan("Full System Scan")
-        self._scan_unused()
+        self._pre_scan("Full System Scan", "scan", "fullscan")
+        self._do_scan_unused()
         # Stagger the scans slightly so they don't all start simultaneously
-        QTimer.singleShot(1000,  self._scan_network)
-        QTimer.singleShot(2000,  self._scan_services)
+        QTimer.singleShot(1000,  self._do_scan_network)
+        QTimer.singleShot(2000,  self._do_scan_services)
 
     # ── Security checks ───────────────────────────────────────────────────
     def _quick_checks(self):
-        self._pre_scan(L("btn_quick"))
+        self._pre_scan(L("btn_quick"), "checks", "quick")
         run_quick_checks(self.terminal, self.findings)
+        self._post_scan_check()
 
     def _run_lynis(self):
-        """Run Lynis audit — switch to the Lynis tab to show results."""
-        self._pre_scan(L("btn_lynis"))
-        # Find and switch to the Lynis tab
-        for i in range(self.tabs.count()):
-            if "LYNIS" in self.tabs.tabText(i).upper():
-                self.tabs.setCurrentIndex(i)
-                break
-        self.lynis_panel.run_lynis()
+        """Run Lynis audit — switch to the Lynis page to show results."""
+        self._pre_scan(L("btn_lynis"), "checks", "lynis")
+        self.stack.setCurrentIndex(2)  # Page 2 = LynisPanel
+        self.lynis_panel.run_lynis(on_complete=self._post_scan_check)
 
     def _guided_wizard(self):
         """Open the step-by-step fix wizard dialog."""
         GuidedWizard(self.terminal, self).exec()
+        self._mark_section_action_done("checks", "wizard")
 
     # ── CVE checks ────────────────────────────────────────────────────────
     def _scan_cve(self):
-        """Run CVE check — switch to CVE tab to show results."""
-        self._pre_scan(L("btn_cve"))
-        for i in range(self.tabs.count()):
-            if "CVE" in self.tabs.tabText(i).upper():
-                self.tabs.setCurrentIndex(i)
-                break
-        self.cve_panel.scan_cve()
+        """Run CVE check — switch to CVE page to show results."""
+        self._pre_scan(L("btn_cve"), "cve", "cve")
+        self.stack.setCurrentIndex(1)  # Page 1 = CvePanel
+        self.cve_panel.scan_cve(on_complete=self._post_scan_check)
 
     def _scan_upgrades(self):
-        """Check for available updates."""
-        self._pre_scan(L("btn_upgrades"))
-        self.cve_panel.scan_upgrades()
+        """Check for available updates — switch to CVE page."""
+        self._pre_scan(L("btn_upgrades"), "cve", "upgrades")
+        self.stack.setCurrentIndex(1)  # Page 1 = CvePanel
+        self.cve_panel.scan_upgrades(on_complete=self._post_scan_check)
 
     # ── Tools and undo ────────────────────────────────────────────────────
     def _show_tools(self):
-        """Switch to the tools tab."""
-        for i in range(self.tabs.count()):
-            if "TOOL" in self.tabs.tabText(i).upper():
-                self.tabs.setCurrentIndex(i)
-                break
+        """Switch to the tools page."""
+        self.stack.setCurrentIndex(3)  # Page 3 = ToolsPanel
+        self._mark_section_action_done("tools", "tools")
 
     def _show_undo(self):
-        """Switch to the undo tab."""
-        for i in range(self.tabs.count()):
-            if "UNDO" in self.tabs.tabText(i).upper():
-                self.tabs.setCurrentIndex(i)
-                break
+        """Switch to the undo page."""
+        self.stack.setCurrentIndex(4)  # Page 4 = UndoPanel
+        self._mark_section_action_done("undo", "undo")
 
 
 # ── Profile selection dialog ──────────────────────────────────────────────────
@@ -3760,7 +4732,7 @@ class SessionSummaryDialog(QDialog):
         self.setMinimumSize(560, 480)
         layout = QVBoxLayout(self)
 
-        title = QLabel("📋  SESSION SUMMARY")
+        title = QLabel("📋  What's Been Done?")
         title.setObjectName("heading")
         layout.addWidget(title)
 
@@ -3885,7 +4857,7 @@ footer{{color:#8b949e;font-size:11px;text-align:center;margin-top:40px;border-to
 </head><body>
 <h1>⬡ Linux Security Audit Report</h1>
 <div class="meta">
-Host: <b>{html.escape(hostname)}</b> |
+Hostname: <b>{html.escape(hostname)}</b> |
 Profile: {html.escape(profile_label)} |
 Generated: {ts} |
 Mode: {"Executive" if mode == "executive" else "Technical"}
@@ -3928,15 +4900,22 @@ class AuditDashboard(QMainWindow):
 
         # Read saved preferences
         cfg           = load_config()
-        saved_theme   = cfg.get("prefs", "theme",    fallback="Dark")
+        startup_theme = get_startup_theme(cfg)
+        self.theme_locked = config_bool(
+            cfg.get("prefs", "theme_locked", fallback="false")
+        )
         saved_lang    = cfg.get("prefs", "language",  fallback="EN")
         saved_profile = cfg.get("prefs", "profile",   fallback=None)
 
-        # Apply saved theme and language before building the UI
+        # Apply saved theme and language before building the UI.
+        # Must rebuild BOTH stylesheet AND palette — Light mode needs the palette
+        # updated or Qt's Fusion base colours stay dark (including frame/bevel roles).
         global LANG
         LANG = saved_lang
-        apply_theme(saved_theme)
-        QApplication.instance().setStyleSheet(make_style())
+        apply_theme(startup_theme)
+        _app = QApplication.instance()
+        _app.setPalette(build_palette())
+        _app.setStyleSheet(make_style())
 
         # Read wizard result if this is the first run
         self.expert_mode = True
@@ -3956,21 +4935,21 @@ class AuditDashboard(QMainWindow):
 
         # ── Toolbar ──────────────────────────────────────────────────────
         tbw = QWidget()
-        tbw.setStyleSheet(
-            f"background:{T['BG_MID']};border-bottom:1px solid {T['BORDER']};"
-        )
-        tbw.setFixedHeight(46)
-        tb = QHBoxLayout(tbw)
-        tb.setContentsMargins(12, 4, 12, 4)
-        tb.setSpacing(8)
+        tbw.setObjectName("toolbar_bar")   # styled via make_style() so theme changes apply
+        tbw.setMinimumHeight(84)
+        tb = QVBoxLayout(tbw)
+        tb.setContentsMargins(10, 6, 10, 6)
+        tb.setSpacing(6)
 
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(8)
         title_lbl = QLabel(L("title"))
-        title_lbl.setStyleSheet(
-            f"color:{T['ACCENT']};font-size:{fs(1)}px;"
-            f"letter-spacing:3px;font-weight:bold;"
-        )
-        tb.addWidget(title_lbl)
-        tb.addStretch()
+        title_lbl.setObjectName("app_title")   # styled via make_style()
+        title_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        title_lbl.setMinimumWidth(280)
+        top_row.addWidget(title_lbl, 1)
+        top_row.addStretch()
 
         # Mode / Language / Theme dropdowns
         for label2, items2, width2, attr2, handler2 in [
@@ -3980,13 +4959,27 @@ class AuditDashboard(QMainWindow):
         ]:
             ll = QLabel(label2)
             ll.setObjectName("status")
-            tb.addWidget(ll)
+            top_row.addWidget(ll)
             cb = QComboBox()
             cb.addItems(items2)
             cb.setFixedWidth(width2)
             setattr(self, attr2, cb)
             cb.currentTextChanged.connect(handler2)
-            tb.addWidget(cb)
+            top_row.addWidget(cb)
+
+        self.theme_lock_btn = QPushButton()
+        self.theme_lock_btn.setObjectName("neutral")
+        self.theme_lock_btn.setCheckable(True)
+        self.theme_lock_btn.setChecked(self.theme_locked)
+        self.theme_lock_btn.setFixedHeight(30)
+        self.theme_lock_btn.clicked.connect(self._toggle_theme_lock)
+        top_row.addWidget(self.theme_lock_btn)
+        self._update_theme_lock_button()
+        tb.addLayout(top_row)
+
+        actions_row = QHBoxLayout()
+        actions_row.setContentsMargins(0, 0, 0, 0)
+        actions_row.setSpacing(8)
 
         # Set combos to saved values — block signals to avoid premature handlers
         self.mode_combo.blockSignals(True)
@@ -3995,27 +4988,31 @@ class AuditDashboard(QMainWindow):
         )
         self.mode_combo.blockSignals(False)
         self.lang_combo.setCurrentText(saved_lang)
-        self.theme_combo.setCurrentText(saved_theme)
+        self.theme_combo.blockSignals(True)
+        self.theme_combo.setCurrentText(startup_theme)
+        self.theme_combo.blockSignals(False)
 
         # Toolbar action buttons
         for lbl3, tip3, handler3 in [
-            ("📋  SESSION SUMMARY", "Plain English summary of everything done this session", self._show_session_summary),
-            ("📄  REPORT",          "Generate a security report as an HTML file",            self._generate_report),
-            ("{ }  SHOW CODE",      "See every command this app can run — full transparency",  self._show_code),
+            ("📋  What's Been Done?", "Plain English summary of everything done this session", self._show_session_summary),
+            ("👤  CHANGE PROFILE",   "Re-detect or manually select your system profile",       self._detect_profile),
+            ("📄  REPORT",           "Generate a security report as an HTML file",              self._generate_report),
+            ("{ }  SHOW CODE",       "See every command this app can run — full transparency",  self._show_code),
+            ("🪲  DEV LOG",          "Show the application error/debug log in the terminal",    self._show_dev_log),
         ]:
             b = QPushButton(lbl3)
             b.setObjectName("neutral")
-            b.setFixedHeight(32)
+            b.setFixedHeight(30)
             b.setToolTip(tip3)
             b.clicked.connect(handler3)
-            tb.addWidget(b)
+            actions_row.addWidget(b)
+        actions_row.addStretch()
+        tb.addLayout(actions_row)
         root.addWidget(tbw)
 
         # ── Risk score panel ──────────────────────────────────────────────
         rpw = QWidget()
-        rpw.setStyleSheet(
-            f"background:{T['BG_MID']};border-bottom:2px solid {T['BORDER']};"
-        )
+        rpw.setObjectName("risk_panel_bar")  # styled via make_style() so theme changes apply
         rl = QHBoxLayout(rpw)
         rl.setContentsMargins(0, 0, 0, 0)
         self.risk_panel = RiskScorePanel()
@@ -4043,18 +5040,20 @@ class AuditDashboard(QMainWindow):
         # Register the undo panel so FindingsTable can update it live
         QApplication.instance().undo_panel_ref = undo_panel
 
-        # ── Tab widget (main content area) ────────────────────────────────
-        self.tabs = QTabWidget()
-        self.tabs.addTab(self.findings,  L("tab_findings"))
-        self.tabs.addTab(cve_panel,      L("tab_cve"))
-        self.tabs.addTab(lynis_panel,    L("tab_lynis"))
-        self.tabs.addTab(tools_panel,    L("tab_tools"))
-        self.tabs.addTab(undo_panel,     L("tab_undo"))
+        # ── Stack widget (no visible tab bar — sidebar controls page) ────
+        # Page indices: 0=findings, 1=cve, 2=lynis, 3=tools, 4=undo
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.findings)
+        self.stack.addWidget(cve_panel)
+        self.stack.addWidget(lynis_panel)
+        self.stack.addWidget(tools_panel)
+        self.stack.addWidget(undo_panel)
 
-        # ── Vertical splitter: tabs on top, terminal on bottom ────────────
-        self.vsplit = QSplitter(Qt.Orientation.Vertical)
-        self.vsplit.setHandleWidth(6)
-        self.vsplit.addWidget(self.tabs)
+        # ── Vertical splitter: stack on top, terminal on bottom ───────────
+        self.vsplit = CueSplitter(Qt.Orientation.Vertical)
+        self.vsplit.setHandleWidth(12)
+        self.vsplit.setToolTip("Drag here to resize panels")
+        self.vsplit.addWidget(self.stack)
         self.vsplit.addWidget(self.terminal)
         self.vsplit.setSizes([580, 260])
 
@@ -4062,7 +5061,7 @@ class AuditDashboard(QMainWindow):
         self.sidebar = SideBar(
             self.terminal, self.findings,
             lynis_panel, cve_panel, tools_panel, undo_panel,
-            self.tabs, self.online_mode
+            self.stack, self.online_mode
         )
         body_layout.addWidget(self.sidebar)
         body_layout.addWidget(self.vsplit, 1)
@@ -4077,12 +5076,9 @@ class AuditDashboard(QMainWindow):
         )
 
         # ── Set up profile ────────────────────────────────────────────────
-        if saved_profile:
-            self.profile_key = saved_profile
-            self.risk_panel.set_profile(self.profile_key)
-            self.findings.profile_key = self.profile_key
-        elif not wizard_result:
-            # Auto-detect profile after a short delay
+        # Always detect on startup so the profile stays current.
+        # The saved profile is shown as the default selection in the dialog.
+        if not wizard_result:
             QTimer.singleShot(400, self._detect_profile)
         else:
             self.risk_panel.set_profile(self.profile_key)
@@ -4131,33 +5127,62 @@ class AuditDashboard(QMainWindow):
         )
 
     def _change_theme(self, name):
-        """Switch the colour theme — updates palette and stylesheet."""
+        """Switch the colour theme — updates palette and stylesheet.
+
+        Only app.setPalette + app.setStyleSheet are needed.  Any widget-level
+        setStyleSheet call with a bare rule (no selector) cascades to ALL child
+        widgets and *overrides* the global stylesheet — that is the bug that
+        caused section buttons, section sub-labels and the sidebar to stay stuck
+        on the startup theme even after switching.  All persistent widgets are
+        now styled via objectNames in make_style() so no widget-level overrides
+        are needed here.
+        """
         apply_theme(name)
         app = QApplication.instance()
-        # Rebuild the palette so Qt's Fusion style uses the new colours
-        pal = QPalette()
-        for role, col in [
-            (QPalette.ColorRole.Window,          T["BG_DARK"]),
-            (QPalette.ColorRole.WindowText,      T["TEXT_MAIN"]),
-            (QPalette.ColorRole.Base,            T["BG_MID"]),
-            (QPalette.ColorRole.AlternateBase,   T["BG_CARD"]),
-            (QPalette.ColorRole.Text,            T["TEXT_MAIN"]),
-            (QPalette.ColorRole.Button,          T["BG_CARD"]),
-            (QPalette.ColorRole.ButtonText,      T["TEXT_MAIN"]),
-            (QPalette.ColorRole.Highlight,       QColor(T["ACCENT"])),
-            (QPalette.ColorRole.HighlightedText, QColor(T["BG_DARK"])),
-        ]:
-            pal.setColor(role, QColor(col) if isinstance(col, str) else col)
-        app.setPalette(pal)
+        app.setPalette(build_palette())
         app.setStyleSheet(make_style())
-        # Force sidebar and table inline styles to update
-        if hasattr(self, "sidebar"):
-            self.sidebar.setStyleSheet(f"background:{T['SIDEBAR']};")
+        # Refresh the risk bar chunk colour — it only updates normally when the
+        # risk score changes, so force a redraw on theme change.
+        if hasattr(self, "risk_panel"):
+            self.risk_panel.update_score()
         if hasattr(self, "findings"):
-            self.findings.table.setStyleSheet(
-                f"alternate-background-color:{T['BG_DARK']};"
+            self.findings.refresh_theme_styles()
+        if self.theme_locked:
+            save_config("prefs", "theme_locked", "true")
+            save_config("prefs", "locked_theme", name)
+        else:
+            save_config("prefs", "theme_locked", "false")
+
+    def _update_theme_lock_button(self):
+        """Refresh lock button label and tooltip from current state."""
+        if not hasattr(self, "theme_lock_btn"):
+            return
+        if self.theme_locked:
+            self.theme_lock_btn.setText("🔒 Theme Locked")
+            self.theme_lock_btn.setToolTip(
+                "Locked: this theme will be used on startup.\nClick to unlock (startup returns to Light mode)."
             )
-        save_config("prefs", "theme", name)
+        else:
+            self.theme_lock_btn.setText("🔓 Lock Theme")
+            self.theme_lock_btn.setToolTip(
+                "Unlocked: app starts in Light mode.\nClick to lock the current theme for startup."
+            )
+
+    def _toggle_theme_lock(self, checked):
+        """Lock/unlock startup theme persistence."""
+        self.theme_locked = bool(checked)
+        if self.theme_locked:
+            save_config("prefs", "theme_locked", "true")
+            save_config("prefs", "locked_theme", self.theme_combo.currentText())
+            self.terminal.append_ok(
+                f"Theme locked: startup will use {self.theme_combo.currentText()}."
+            )
+        else:
+            save_config("prefs", "theme_locked", "false")
+            self.terminal.append_info(
+                "Theme unlocked: startup will default to Light mode."
+            )
+        self._update_theme_lock_button()
 
     def _change_lang(self, lang):
         """Change the display language. Requires restart for full effect."""
@@ -4283,6 +5308,23 @@ UNDO COMMANDS (require confirmation dialog before running):
         layout.addWidget(btns)
         dlg.exec()
 
+    def _show_dev_log(self):
+        """Show the last 200 lines of the application error log in the terminal.
+        Useful when developing or diagnosing issues."""
+        self.terminal.append_info(f"── Dev Log: {LOG_FILE} ──")
+        try:
+            if LOG_FILE.exists():
+                lines = LOG_FILE.read_text(errors="replace").splitlines()
+                recent = lines[-200:] if len(lines) > 200 else lines
+                if recent:
+                    self.terminal.append("\n".join(recent), T["TEXT_DIM"])
+                else:
+                    self.terminal.append_ok("Log file is empty — no errors recorded.")
+            else:
+                self.terminal.append_ok("No log file yet — no errors have been recorded.")
+        except Exception as e:
+            self.terminal.append_err(f"Could not read log file: {e}")
+
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 def main():
@@ -4293,26 +5335,13 @@ def main():
     app.setStyle("Fusion")
     app.undo_panel_ref = None  # Will be set once the main window is built
 
-    # Load saved theme FIRST so the palette matches what the user chose
+    # Load startup theme FIRST (Light by default unless theme lock is enabled)
     cfg          = load_config()
-    saved_theme  = cfg.get("prefs", "theme", fallback="Dark")
-    apply_theme(saved_theme)
+    startup_theme = get_startup_theme(cfg)
+    apply_theme(startup_theme)
 
     # Set up the Qt palette (affects base widget colours that stylesheets don't)
-    palette = QPalette()
-    for role, col in [
-        (QPalette.ColorRole.Window,          T["BG_DARK"]),
-        (QPalette.ColorRole.WindowText,      T["TEXT_MAIN"]),
-        (QPalette.ColorRole.Base,            T["BG_MID"]),
-        (QPalette.ColorRole.AlternateBase,   T["BG_CARD"]),
-        (QPalette.ColorRole.Text,            T["TEXT_MAIN"]),
-        (QPalette.ColorRole.Button,          T["BG_CARD"]),
-        (QPalette.ColorRole.ButtonText,      T["TEXT_MAIN"]),
-        (QPalette.ColorRole.Highlight,       QColor(T["ACCENT"])),
-        (QPalette.ColorRole.HighlightedText, QColor(T["BG_DARK"])),
-    ]:
-        palette.setColor(role, QColor(col) if isinstance(col, str) else col)
-    app.setPalette(palette)
+    app.setPalette(build_palette())
     app.setStyleSheet(make_style())
 
     # Show the startup wizard only on first run (no config file yet)
@@ -4323,7 +5352,8 @@ def main():
         wiz.exec()
         wizard_result = wiz
         # Mark as no longer first run
-        save_config("prefs", "theme",    saved_theme)
+        save_config("prefs", "theme_locked", "false")
+        save_config("prefs", "locked_theme", "Light")
         save_config("prefs", "language", "EN")
 
     win = AuditDashboard(wizard_result=wizard_result if first_run else None)

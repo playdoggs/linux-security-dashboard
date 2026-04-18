@@ -1,3 +1,21 @@
+# AGENT OPERATIONAL DIRECTIVES (CRITICAL)
+
+## Documentation Authority
+You are an agent with a "Documentation-First" mandate. All technical truth and state management must be mirrored in the `agent_docs/` directory for Obsidian tracking.
+- **Path:** `./agent_docs/`
+- **Mandate:** Before starting any task, `cat` the relevant `.md` file in `agent_docs/`.
+- **Sync Rule:** After completing a code change, you MUST update the corresponding `.md` file to reflect the new state (e.g., if you add a class, update `service_architecture.md`).
+
+## Specific File Mapping
+- **Builds:** `agent_docs/building_the_project.md`
+- **Tests:** `agent_docs/running_tests.md`
+- **Standards:** `agent_docs/code_conventions.md`
+- **Logic/Flow:** `agent_docs/service_architecture.md`
+- **Data:** `agent_docs/database_schema.md`
+- **API/Events:** `agent_docs/service_communication_patterns.md`
+
+---
+
 # CLAUDE.md — AI Developer Context
 
 This file gives AI assistants full project context at the start of a session.
