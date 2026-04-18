@@ -27,8 +27,8 @@ This tool assumes you don't — and that's fine.
 - **Undo Log** — every action recorded, one-click rollback
 - **HTML Report** — plain English (Executive) or full technical deep-dive
 - **Auto-detects** what kind of machine you're running (Gaming Rig, Home Server, Docker Host, etc.) and adjusts what's flagged as normal vs suspicious
-- **Multiple themes** — Dark, Hacker, Solarized, Light
-- **Multiple languages** — English, German, French, Spanish, and more
+- **Multiple themes** — Dark, Hacker, Solarized, Light, Pink
+- **Multiple languages** — 12 built in (English, German, French, Spanish, Italian, Portuguese, Dutch, Japanese, Chinese Simplified, Arabic with RTL, and more)
 
 ---
 
@@ -67,7 +67,7 @@ git clone https://github.com/playdoggs/linux-audit-dashboard
 cd linux-audit-dashboard
 
 # Run it
-python3 linux-audit-dashboard.py
+python3 linux-audit-dashboard-v4.2.py
 ```
 
 ---
@@ -107,11 +107,12 @@ python3 linux-audit-dashboard.py
 - [x] System profile auto-detection
 - [x] Multiple themes
 - [x] HTML report export
-- [ ] Tool Manager tab (rkhunter, clamav, smartmontools, timeshift etc.)
-- [ ] Duke Nukem health face
-- [ ] Multi-language support
+- [x] Tool Manager tab (15 tools: rkhunter, clamav, smartmontools, timeshift etc.)
+- [x] Duke Nukem health face (6 states)
+- [x] Multi-language support (12 languages, RTL layouts for Arabic)
+- [x] Persistent undo log (survives restarts)
+- [x] Idempotent Guided Fix Wizard (skips fixes that are already applied)
 - [ ] Fedora/Arch/pacman support
-- [ ] Persistent undo log (survives restarts)
 - [ ] Timeshift snapshot before actions
 - [ ] Drive health (smartmontools integration)
 - [ ] Live temperature monitoring (lm-sensors)
