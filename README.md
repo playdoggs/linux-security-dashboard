@@ -1,7 +1,8 @@
 # Linux Security Dashboard
 
-A plain-English, GUI-based security audit tool for Linux.  
-Built for people who want to know if their system is safe — without needing a cybersecurity degree.
+A GUI-based security audit tool for Linux.  
+
+Built for people who want to know if their system is safe or at least get an idea of what safe might look like or be made up of on Linux — without needing a cybersecurity degree.
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue)
 ![PyQt6](https://img.shields.io/badge/PyQt6-GUI-green)
@@ -13,6 +14,7 @@ Built for people who want to know if their system is safe — without needing a 
 ## What it does
 
 Most Linux security tools are command-line only and assume you already know what you're doing.  
+
 This tool assumes you don't — and that's fine.
 
 - **Scans** your system for orphaned packages, open ports, and risky services
