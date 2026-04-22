@@ -88,7 +88,26 @@ python3 linux-security-dashboard.py
 
 ## Screenshots
 
-*Coming soon*
+| Main Dashboard & Health Status | System Profile Logic |
+| :---: | :---: |
+| <img src="https://github.com/user-attachments/assets/89dc34d3-12b0-455f-9502-287d5746884b" width="400" /> | <img src="https://github.com/user-attachments/assets/8b587be8-dec4-401b-8ea8-7a72f35b27d6" width="400" /> |
+| **Duke Nukem Health Status** | **Smart Profile Detection** |
+
+| Vulnerability (CVE) Scanning | Plain English Explanations |
+| :---: | :---: |
+| <img src="https://github.com/user-attachments/assets/bdb0feac-bc92-4a92-9d26-801036f005ed" width="400" /> | <img src="https://github.com/user-attachments/assets/b8fc71bd-7da5-4000-9f91-0918084f5c3d" width="400" /> |
+| **Deep Security Scanning** | **Jargon-Free Insights** |
+
+| Tool Guides & Education | Tracking, Logging & Rollbacks |
+| :---: | :---: |
+| <img src="https://github.com/user-attachments/assets/1b4a68dc-f853-47d9-b409-c83cc4f557a1" width="400" /> | <img src="https://github.com/user-attachments/assets/28601af7-9577-4bc5-a6cf-099f3e0a834a" width="400" /> |
+| **Integrated Learning** | **Full Session Rollback Log** |
+
+| Final Results |
+| :---: |
+| <img src="https://github.com/user-attachments/assets/78b6e1c7-210e-4e5a-8ed1-b3529b2273e3" width="600" /> |
+| **Secured System State** |
+
 
 ---
 
