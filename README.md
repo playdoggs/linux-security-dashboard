@@ -24,10 +24,13 @@ This tool assumes you don't — and that's fine.
 - **One-click fixes** with a confirmation dialog that shows exactly what will run before anything happens
 - **Guided Fix Wizard** — step-by-step walkthroughs for common security fixes
 - **Tool Manager** — installs and explains security/monitoring tools like rkhunter, fail2ban, smartmontools
+- **RUN EVERYTHING** — chains every non-sudo scan and opens a good / needs-fixing summary dialog
+- **Offline-aware** — detects no internet and advises you; CVE and tool install gracefully skip with a clear message
+- **Live progress in terminal** — every multi-item scan shows `[N/TOTAL] …` as it runs
 - **Risk Score** — 0 to 100, updates live as scans run
 - **Duke Nukem health face** — gets progressively more battered as your risk score rises 😄
-- **Undo Log** — every action recorded, one-click rollback
-- **HTML Report** — plain English (Executive) or full technical deep-dive
+- **Undo Log** — every action recorded, one-click rollback, survives restarts
+- **HTML Report** — plain English (Executive) or full technical deep-dive; filename auto-tagged with hostname
 - **Auto-detects** what kind of machine you're running (Gaming Rig, Home Server, Docker Host, etc.) and adjusts what's flagged as normal vs suspicious
 - **Multiple themes** — Dark, Hacker, Solarized, Light, Pink
 - **Multiple languages** — 12 built in (English, German, French, Spanish, Italian, Portuguese, Dutch, Japanese, Chinese Simplified, Arabic with RTL, and more)
@@ -133,7 +136,11 @@ python3 linux-security-dashboard.py
 - [x] Multi-language support (12 languages, RTL layouts for Arabic)
 - [x] Persistent undo log (survives restarts)
 - [x] Idempotent Guided Fix Wizard (skips fixes that are already applied)
-- [ ] Fedora/Arch/pacman support
+- [x] RUN EVERYTHING chained assessment + summary dialog
+- [x] Offline detection and graceful "requires internet" messaging
+- [x] Live `[N/TOTAL]` progress output in terminal for multi-item scans
+- [x] Hostname-tagged report filenames + one-click auto-open in browser
+- [ ] Full Fedora/Arch parity (package manager hooks done; CVE/inventory scans still apt-only)
 - [ ] Timeshift snapshot before actions
 - [ ] Drive health (smartmontools integration)
 - [ ] Live temperature monitoring (lm-sensors)
@@ -167,6 +174,7 @@ These files served as the source of truth for the AI, specifically:
 - **`known_bugs.md`**: A shared memory space to ensure we didn't fix one thing and break another.
 
 Feel free to explore the `agent_docs` folder to see how these guardrails were built!
+
 ---
 
 ## License
