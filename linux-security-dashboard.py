@@ -1676,6 +1676,7 @@ class RiskScorePanel(QWidget):
     def __init__(self):
         super().__init__()
         self.setFixedHeight(80)
+        self.findings_widget = None
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 4, 12, 4)
         layout.setSpacing(14)
@@ -1716,8 +1717,8 @@ class RiskScorePanel(QWidget):
         self.bar.setFixedHeight(26)
         mid.addWidget(self.bar)
 
-        # Breakdown of how many HIGH/MEDIUM/LOW findings
-        self.detail = QLabel("Run a scan to calculate your risk score")
+        # Breakdown of total + section scores
+        self.detail = QLabel("Run a scan to calculate your health score")
         self.detail.setObjectName("status")
         mid.addWidget(self.detail)
         layout.addLayout(mid)
@@ -1743,11 +1744,55 @@ class RiskScorePanel(QWidget):
         h = RISK.findings.count("HIGH")
         m = RISK.findings.count("MEDIUM")
         l = RISK.findings.count("LOW")
+        section_scan, section_checks, section_cve = self._section_scores()
         self.detail.setText(
             f"🔴 HIGH: {h}   🟡 MEDIUM: {m}   🟢 LOW: {l}"
-            f"   Total findings: {len(RISK.findings)}"
+            f"   Running health score: {s}/100"
+            f"   Section scores — Scan: {section_scan}  Checks: {section_checks}  CVE: {section_cve}"
         )
         self.update_face(s)
+
+    def bind_findings(self, findings_widget):
+        """Bind FindingsTable so section scores can be computed live."""
+        self.findings_widget = findings_widget
+
+    def _section_scores(self):
+        """Return weighted scores per section: (scan, checks, cve).
+        OUTDATED entries are excluded from health scoring."""
+        if not self.findings_widget:
+            return (0, 0, 0)
+        weights = {"HIGH": 20, "MEDIUM": 8, "LOW": 3, "INFO": 0}
+        type_to_section = {
+            "LEFTOVER": "scan",
+            "NETWORK": "scan",
+            "SERVICE": "scan",
+            "HARDENING": "checks",
+            "CVE": "cve",
+            "OUTDATED": "cve",  # shown in CVE section but excluded from health
+        }
+        totals = {"scan": 0, "checks": 0, "cve": 0}
+        tbl = self.findings_widget.table
+        for r in range(tbl.rowCount()):
+            item0 = tbl.item(r, 0)
+            if not item0:
+                continue
+            data = item0.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(data, dict):
+                continue
+            ftype = (data.get("ftype") or "").upper()
+            risk = (data.get("risk") or "INFO").upper()
+            section = type_to_section.get(ftype)
+            if not section:
+                continue
+            # Package update availability is informational for health score.
+            if ftype == "OUTDATED":
+                continue
+            totals[section] += weights.get(risk, 0)
+        return (
+            min(100, totals["scan"]),
+            min(100, totals["checks"]),
+            min(100, totals["cve"]),
+        )
 
     def set_profile(self, key, conf=0):
         """Show the detected system profile in the top right."""
@@ -2203,16 +2248,27 @@ class FindingsTable(QWidget, WorkerMixin):
         self._apply_ok_banner_style()
 
     def _build_action_cell(self, name, ftype, risk, detail, cmd_remove=None, cmd_disable=None):
-        """Create the ACTIONS widget for one findings row."""
+        """Create the ACTIONS widget for one findings row.
+
+        The base QPushButton style has `padding: 6px 14px` which is great for
+        wide buttons but devours a 22px square button — leaves the glyph
+        invisible and the button looks like a grey ghost. Small icon
+        buttons here override the padding so the `?` / `✕` glyphs show.
+        REMOVE / DISABLE use fixed widths so they never overflow the
+        240px Actions column (which would push the right edge over the
+        cell border)."""
         cell = QWidget()
         cell.setStyleSheet("background:transparent;")
         bl = QHBoxLayout(cell)
         bl.setContentsMargins(3, 2, 3, 2)
         bl.setSpacing(3)
 
+        icon_btn_css = "padding: 0px; min-width: 0; font-weight: bold;"
+
         exp_btn = QPushButton("?")
         exp_btn.setObjectName("neutral")
-        exp_btn.setFixedSize(22, 22)
+        exp_btn.setFixedSize(24, 22)
+        exp_btn.setStyleSheet(icon_btn_css)
         exp_btn.setToolTip("Explain this finding in everyday language")
         exp_btn.clicked.connect(
             lambda _, n=name, ft=ftype, r=risk, d=detail:
@@ -2222,7 +2278,8 @@ class FindingsTable(QWidget, WorkerMixin):
 
         ign_btn = QPushButton("✕")
         ign_btn.setObjectName("neutral")
-        ign_btn.setFixedSize(22, 22)
+        ign_btn.setFixedSize(24, 22)
+        ign_btn.setStyleSheet(icon_btn_css)
         ign_btn.setToolTip("Ignore this finding for this session")
         ign_btn.clicked.connect(lambda _, n=name: self._ignore(n))
         bl.addWidget(ign_btn)
@@ -2230,8 +2287,8 @@ class FindingsTable(QWidget, WorkerMixin):
         if cmd_remove:
             rb = QPushButton("REMOVE")
             rb.setObjectName("danger")
-            rb.setMinimumWidth(66)
-            rb.setFixedHeight(22)
+            rb.setFixedSize(78, 22)
+            rb.setStyleSheet("padding: 0px 6px;")
             rb.setToolTip(f"Remove {name} from this system (asks for confirmation)")
             rb.clicked.connect(
                 lambda _, c=cmd_remove, n=name, r=risk:
@@ -2242,8 +2299,8 @@ class FindingsTable(QWidget, WorkerMixin):
         if cmd_disable:
             db = QPushButton("DISABLE")
             db.setObjectName("warn")
-            db.setMinimumWidth(66)
-            db.setFixedHeight(22)
+            db.setFixedSize(78, 22)
+            db.setStyleSheet("padding: 0px 6px;")
             db.setToolTip(f"Disable {name} so it no longer runs (asks for confirmation)")
             db.clicked.connect(
                 lambda _, c=cmd_disable, n=name, r=risk:
@@ -2290,8 +2347,10 @@ class FindingsTable(QWidget, WorkerMixin):
 
         self._seen_findings.add((name, ftype))
 
-        # Update the risk tracker
-        RISK.add(risk)
+        # Update the risk tracker. OUTDATED (available package updates) is
+        # tracked in findings but excluded from health score impact.
+        if ftype != "OUTDATED":
+            RISK.add(risk)
         if self._bulk_depth == 0:
             self.score_changed.emit()
         # A bad finding appeared — hide the "all looks well" banner if visible
@@ -3110,6 +3169,7 @@ class GuidedWizard(QDialog, WorkerMixin):
         self._fix_running = False
         self._pending_fix_cmds = []
         self._fix_password = None
+        self._selected_fix_idx = None
 
         layout = QVBoxLayout(self)
         hdr = QLabel("🔧  GUIDED FIX WIZARD")
@@ -3249,10 +3309,16 @@ class GuidedWizard(QDialog, WorkerMixin):
     def _on_item_clicked(self, item):
         """Load the selected fix when the user clicks a list item."""
         idx = self.fix_list.row(item)
+        self._show_fix_detail(idx)
+
+    def _show_fix_detail(self, idx):
+        """Render detail page for a fix index."""
         if idx < 0 or idx >= len(self.fixes):
             return
+        self._selected_fix_idx = idx
         name, fn, _check_fn, meta = self.fixes[idx]
-        done = item.data(Qt.ItemDataRole.UserRole)
+        item = self.fix_list.item(idx)
+        done = item.data(Qt.ItemDataRole.UserRole) if item else False
         self.fix_title.setText(name)
         if done:
             self.fix_status.setText("✅ Already configured — your system already has this protection.")
@@ -3277,9 +3343,29 @@ class GuidedWizard(QDialog, WorkerMixin):
         )
         self.stack.setCurrentIndex(1)
 
+    def _refresh_fix_statuses(self):
+        """Re-check all fixes and refresh ✅/⚠ markers in the list."""
+        for idx, (name, _fn, check_fn, _meta) in enumerate(self.fixes):
+            done = bool(check_fn())
+            item = self.fix_list.item(idx)
+            if not item:
+                continue
+            item.setData(Qt.ItemDataRole.UserRole, done)
+            prefix = "✅  " if done else "⚠️  "
+            item.setText(f"{prefix}{name}")
+
     def _run_fix(self):
         """Run all the commands for the selected fix after confirmation."""
-        if not self._cmds or self._fix_running:
+        if self._fix_running:
+            return
+        if not self._cmds:
+            QMessageBox.information(
+                self, "No Action Needed",
+                "This fix does not require any commands on this system."
+            )
+            self._refresh_fix_statuses()
+            if self._selected_fix_idx is not None:
+                self._show_fix_detail(self._selected_fix_idx)
             return
         if QMessageBox.question(
             self, "Run Fix?",
@@ -3328,6 +3414,9 @@ class GuidedWizard(QDialog, WorkerMixin):
             self._fix_running = False
             self._fix_password = None
             self.run_btn.setEnabled(True)
+            self._refresh_fix_statuses()
+            if self._selected_fix_idx is not None:
+                self._show_fix_detail(self._selected_fix_idx)
             QMessageBox.information(
                 self, "Completed",
                 "All fix commands finished. Check the terminal panel for results."
@@ -3369,16 +3458,52 @@ class GuidedWizard(QDialog, WorkerMixin):
         )
 
     def _fix_ssh(self):
+        cfg = self._find_sshd_config()
+        service = self._detect_ssh_service_name()
+        if not shutil.which("sshd"):
+            return (
+                [
+                    "OpenSSH server is not installed on this system.",
+                    "No SSH daemon means remote root/password SSH login is not exposed.",
+                    "No changes are needed for this fix on this machine.",
+                ],
+                []
+            )
+        if not cfg:
+            return (
+                [
+                    "OpenSSH server appears present but no sshd config file was found.",
+                    "Install/reinstall openssh-server to restore configuration files, then re-run this fix.",
+                ],
+                []
+            )
+        restart_unit = service or "ssh"
         return (
             [
-                "Disable root login over SSH. Make sure you have sudo access BEFORE doing this!",
-                "Disable password authentication — key-based login only. Set up SSH keys FIRST or you will be locked out!",
-                "Restart SSH to apply the changes.",
+                "Disable root login over SSH. Make sure you have sudo access BEFORE doing this.",
+                "Disable password authentication (key-based login only). Set up SSH keys first.",
+                "Restart SSH service to apply the changes.",
             ],
             [
-                "sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config",
-                "sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config",
-                "systemctl restart sshd",
+                [
+                    "sh", "-c",
+                    (
+                        f"f={shlex.quote(cfg)}; "
+                        r"if grep -Eq '^\s*#?\s*PermitRootLogin\b' \"$f\"; then "
+                        r"sed -i -E 's/^\s*#?\s*PermitRootLogin\s+.*/PermitRootLogin no/' \"$f\"; "
+                        r"else printf '\nPermitRootLogin no\n' >> \"$f\"; fi"
+                    ),
+                ],
+                [
+                    "sh", "-c",
+                    (
+                        f"f={shlex.quote(cfg)}; "
+                        r"if grep -Eq '^\s*#?\s*PasswordAuthentication\b' \"$f\"; then "
+                        r"sed -i -E 's/^\s*#?\s*PasswordAuthentication\s+.*/PasswordAuthentication no/' \"$f\"; "
+                        r"else printf '\nPasswordAuthentication no\n' >> \"$f\"; fi"
+                    ),
+                ],
+                ["systemctl", "restart", restart_unit],
             ]
         )
 
@@ -3520,14 +3645,46 @@ class GuidedWizard(QDialog, WorkerMixin):
                                lambda o: o.strip() == "active")
 
     def _check_ssh(self):
-        # Use anchored regexes so commented-out lines and loose substrings don't match.
-        root_ok = self._run_check(
-            ["grep", "-i", "PermitRootLogin", "/etc/ssh/sshd_config"],
-            lambda o: bool(re.search(r"(?im)^\s*PermitRootLogin\s+(no|prohibit-password)\b", o)))
-        pw_ok = self._run_check(
-            ["grep", "-i", "PasswordAuthentication", "/etc/ssh/sshd_config"],
-            lambda o: bool(re.search(r"(?im)^\s*PasswordAuthentication\s+no\b", o)))
+        # If sshd is not installed, this machine is not exposing SSH daemon auth.
+        if not shutil.which("sshd"):
+            return True
+        cfg = self._find_sshd_config()
+        if not cfg:
+            return False
+        try:
+            with open(cfg, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except OSError:
+            return False
+        root_ok = bool(re.search(r"(?im)^\s*PermitRootLogin\s+(no|prohibit-password)\b", content))
+        pw_ok = bool(re.search(r"(?im)^\s*PasswordAuthentication\s+no\b", content))
         return root_ok and pw_ok
+
+    @staticmethod
+    def _find_sshd_config():
+        """Return the sshd config file path if present."""
+        for p in ("/etc/ssh/sshd_config", "/etc/sshd_config"):
+            if os.path.exists(p):
+                return p
+        return None
+
+    @staticmethod
+    def _detect_ssh_service_name():
+        """Detect whether this system uses ssh or sshd service unit name."""
+        def _loaded(unit):
+            try:
+                r = subprocess.run(
+                    ["systemctl", "show", "-p", "LoadState", unit],
+                    capture_output=True, text=True, timeout=3
+                )
+                return "LoadState=loaded" in (r.stdout or "")
+            except Exception:
+                return False
+        if _loaded("ssh"):
+            return "ssh"
+        if _loaded("sshd"):
+            return "sshd"
+        return None
 
     def _check_autoupdate(self):
         return self._run_check(["dpkg", "-l", "unattended-upgrades"],
@@ -4867,22 +5024,24 @@ class UndoPanel(QWidget, WorkerMixin):
         # Store the full entry dict for the detail view
         self.table.item(row, 0).setData(Qt.ItemDataRole.UserRole, entry)
 
-        # UNDO button cell
+        # UNDO button cell — buttons kept short so they fit the 160px column.
+        # HIGH-risk extra context lives in the tooltip rather than the label.
         cell = QWidget()
         cell.setStyleSheet("background:transparent;")
         bl = QHBoxLayout(cell)
-        bl.setContentsMargins(4, 2, 4, 2)
+        bl.setContentsMargins(2, 2, 2, 2)
+        bl.setSpacing(0)
 
         undo_cmd = entry.get("undo_cmd", "N/A")
         if undo_cmd != "N/A":
             is_high = risk_level == "HIGH"
-            ub = QPushButton("⚠️ UNDO (HIGH RISK)" if is_high else "↩  UNDO")
+            ub = QPushButton("⚠  UNDO" if is_high else "↩  UNDO")
             ub.setObjectName("danger" if is_high else "warn")
-            ub.setFixedHeight(26)
+            ub.setFixedSize(120, 24)
             ub.setToolTip(
-                "WARNING: Read the risk details below before rolling this back"
+                "HIGH RISK — read the rollback details below before running."
                 if is_high else
-                "Reverse this action"
+                "Reverse this action."
             )
             ub.clicked.connect(lambda _, e=entry: self._run_undo(e))
             bl.addWidget(ub)
@@ -4893,7 +5052,7 @@ class UndoPanel(QWidget, WorkerMixin):
 
         bl.addStretch()
         self.table.setCellWidget(row, 4, cell)
-        self.table.setRowHeight(row, 38)
+        self.table.setRowHeight(row, 30)
         self._update_empty_state()
 
     def _show_detail(self, row, col):
@@ -6680,6 +6839,7 @@ class AuditDashboard(QMainWindow):
         self.findings  = FindingsTable(self.terminal)
         self.findings.score_changed.connect(self.risk_panel.update_score)
         self.findings.expert_mode = self.expert_mode
+        self.risk_panel.bind_findings(self.findings)
 
         lynis_panel = LynisPanel(self.terminal, self.findings)
         cve_panel   = CvePanel(self.terminal, self.findings)
