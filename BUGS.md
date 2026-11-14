@@ -101,7 +101,19 @@ Last reviewed: 2026-05-03
 
 ## Fixed
 
-No items have moved here yet. When a finding is fixed, leave the ID intact and append `— Fixed in <commit-or-PR>`.
+### B-011 — Buffered command failures triggered success callbacks — Fixed locally (uncommitted)
+
+`CommandWorker.run` previously emitted `finished_ok` unconditionally. Failed
+service actions could clear findings, failed undo could clear its displayed
+entry, and the wizard continued dependent commands. It now separates success
+from failure, restores failure-path UI state, and preserves unconditional
+thread completion for cleanup. Lynis installation and update failures now
+notify separate failure callbacks; they clear pending sidebar state without a
+healthy-completion banner. Update callback references are cleared on either
+outcome. Partial wizard failure refreshes indicators without announcing that
+the entire remediation succeeded. Mocked regression tests are in
+`tests/test_command_outcomes.py`; actual privileged operations and full GUI
+behavior have not been tested. Review scope: this finding only, 2026-11-15.
 
 The list of *prior* fixes documented in [agent_docs/known_bugs.md](agent_docs/known_bugs.md) (SSH regex anchoring, UFW exact-equality match, shlex parsing in the wizard, undo row 4-field key, smartctl `-H` only, drive name regex, Timeshift abort) predates this tracker and is not renumbered into B- IDs.
 

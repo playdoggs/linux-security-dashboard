@@ -4,7 +4,17 @@
 1. UI creates `CommandWorker`.
 2. Worker runs off the GUI thread.
 3. `output_ready` / `error_ready` → terminal.
-4. `finished_ok` → post-processing + score update.
+4. For `CommandWorker`, `finished_ok` means exit status zero; only then run
+   success-dependent verification, score updates or the next wizard step.
+5. `failed` means nonzero exit, timeout or exception. Stop dependent steps;
+   keep findings and undo entries, restore controls and report incomplete work.
+   Wizard failure also refreshes fix indicators and the selected detail view.
+   Lynis installation and update checks use separate `on_failed` callbacks:
+   sidebar failure clears pending state and hides the healthy banner. Update
+   checks clear both stored callbacks on either outcome before notification.
+6. `QThread.finished` handles unconditional lifecycle cleanup and callbacks that
+   must run on either outcome. Streaming/HTTP workers retain their own signal
+   contracts; do not infer their success from the buffered worker contract.
 
 ## CVE scan
 1. `CvePanel.scan_cve()` checks `has_internet()` — offline → skip with clear message, still fires `on_complete`.

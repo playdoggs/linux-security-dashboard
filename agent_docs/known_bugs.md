@@ -21,7 +21,13 @@ None tracked. File a new `### N) …` block when one surfaces.
 
 ### Other
 - Background sudo uses `sudo -S` with `stdin=DEVNULL` fallback.
-- Worker completion signalling avoids stuck "please wait" states.
+- `CommandWorker.finished_ok` is success-only; `failed` covers nonzero exit,
+  timeout and exceptions. Wizard failures stop the queue and clear credentials;
+  failed actions/undo must retain findings/history. Wizard failures refresh
+  indicators without announcing completion. Failed Lynis installation/update
+  checks use `on_failed`, never the sidebar healthy-completion callback.
+  Update checks release both callback references on either outcome; lifecycle
+  cleanup uses `QThread.finished`. Covered by `tests/test_command_outcomes.py`.
 - HTML reports escape content via `html.escape()`.
 - CVE HTTP uses a TLS context + bounded retries.
 - `CvePanel` is shared by CVE and updates scans — both entry points clear `cve_table` on start.

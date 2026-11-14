@@ -13,7 +13,14 @@ All notable changes to Linux Security Dashboard are documented here.
 - Documented open high-impact logic/command-execution bugs in Guided Wizard and quick checks.
 
 ### Fixed
-- N/A in code for this docs-only update.
+- Buffered command failures no longer trigger success callbacks. Guided fixes
+  stop after failure and restore controls; failed actions and rollbacks retain
+  their findings/history. Failed Lynis installation and update checks clear
+  pending scan state without invoking healthy-completion callbacks. Partial
+  wizard failures refresh status indicators without claiming full completion.
+  Update callback references are released on either outcome.
+- Added mocked command-outcome regression tests; no privileged commands are
+  executed by the suite. Streaming worker behavior is unchanged.
 
 ## [v4.2]
 - Current production baseline reflected by this repository state.

@@ -1,6 +1,27 @@
 # Running Tests
 
-No automated test suite yet.
+## Automated command-outcome regression tests
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+Requires existing PyQt6 and Python; uses unittest from the standard library.
+Tests load selected production definitions through AST extraction, avoiding
+module-level logging and distro detection. All subprocess calls are mocked;
+no application window, sudo command or security-setting change is performed.
+Coverage includes success/warnings, nonzero exits with/without stderr, timeout,
+missing commands, unexpected exceptions, thread completion, wizard stop/advance,
+failed actions/undo retaining state, and failed scan completion bookkeeping.
+Real QThread tests exercise the production sidebar entry points and actual
+success/failure handlers for Lynis installation failures and update outcomes
+(nonzero exit, timeout, missing executable, plus update success). A partial
+wizard sequence verifies that status refreshes after a later step fails and
+that no full-completion dialog appears. Widget endpoints remain test doubles;
+status probes are mocked rather than run against the host.
+This does not validate actual privileged commands or full GUI behavior.
+
+Manual application checks below require a suitable authorized test environment.
 
 ## Baseline
 ```bash

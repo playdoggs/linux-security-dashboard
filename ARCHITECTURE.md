@@ -51,6 +51,26 @@ The application is a single-file PyQt6 GUI. All components live in [linux-securi
 | `HttpWorker(QThread)` | [1444-1522](linux-security-dashboard.py#L1444-L1522) | Sequential CVE lookups against `ubuntu.com/security/cves.json`; bounded retries; cancelable |
 | `WorkerMixin` | [1526-1557](linux-security-dashboard.py#L1526-L1557) | Tracks live workers in a set; `_start_worker()`, `_stop_all_workers()`, `_any_running` |
 
+### Buffered command outcomes
+
+`CommandWorker.finished_ok` is emitted only for exit status zero. `failed`
+is emitted for a nonzero exit, timeout or exception. The wizard stops dependent
+steps on failure, clears its password, restores controls and refreshes status
+indicators without announcing full remediation success. Failed actions and
+rollbacks do not run success callbacks. Lynis installation and update scans
+route failures to a separate `on_failed` callback; the sidebar clears pending
+state and hides the healthy banner instead of marking the scan successful.
+Update scans release both stored callbacks before notifying the outcome-specific
+caller. Tool status refreshes and worker lifecycle cleanup remain attached to
+`QThread.finished`.
+
+This contract is specific to `CommandWorker`; streaming and HTTP workers are
+unchanged. Exit status zero is not proof that the intended security state was
+achieved. Focused tests: `tests/test_command_outcomes.py`.
+
+Review scope: buffered command outcomes and affected callers, 2026-11-15.
+Other component line ranges below reflect the earlier review baseline.
+
 ### Widgets / panels
 
 | Component | Lines | Role |

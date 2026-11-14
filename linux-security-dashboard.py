@@ -1253,13 +1253,17 @@ def load_undo_log():
 # emit signals which the main thread handles.
 
 class CommandWorker(QThread):
-    """Runs a shell command in a background thread.
-    Emits output line by line so the terminal updates as it runs."""
+    """Run a command in a background thread, buffering output until it exits.
+
+    finished_ok means exit status zero; failed means nonzero exit or exception.
+    QThread.finished remains the unconditional thread-lifecycle notification.
+    """
 
     # Signals — these are like events the main thread listens for
     output_ready = pyqtSignal(str)  # Fired when there is output to display
     error_ready  = pyqtSignal(str)  # Fired when there is error output
-    finished_ok  = pyqtSignal()     # Fired when the command completes
+    finished_ok  = pyqtSignal()     # Fired only when the command exits successfully
+    failed       = pyqtSignal()     # Fired on nonzero exit, timeout or exception
 
     def __init__(self, cmd, sudo=False, timeout=60, env=None, password=None):
         super().__init__()
@@ -1328,19 +1332,26 @@ class CommandWorker(QThread):
                     self.error_ready.emit(stderr)
                 else:
                     self.output_ready.emit(stderr)
+            if p.returncode == 0:
+                self.finished_ok.emit()
+            else:
+                if not stderr:
+                    self.error_ready.emit(f"Command failed with exit code {p.returncode}.")
+                self.failed.emit()
 
         except subprocess.TimeoutExpired:
             self.error_ready.emit(f"Command timed out after {self.timeout} seconds.")
+            self.failed.emit()
 
         except FileNotFoundError:
             # The command itself doesn't exist on this system
             self.error_ready.emit(f"Command not found: {self.cmd[0]}")
+            self.failed.emit()
 
         except Exception as e:
             logging.error(f"CommandWorker error: {e}")
             self.error_ready.emit(str(e))
-        finally:
-            self.finished_ok.emit()
+            self.failed.emit()
 
 
 class StreamingCommandWorker(QThread):
@@ -3431,7 +3442,22 @@ class GuidedWizard(QDialog, WorkerMixin):
         w.output_ready.connect(lambda t: self.terminal.append(t, T["OK"]))
         w.error_ready.connect(self.terminal.append_err)
         w.finished_ok.connect(self._run_next_fix_cmd)
+        w.failed.connect(self._fix_failed)
         self._start_worker(w)
+
+    def _fix_failed(self):
+        """Stop dependent commands and restore controls after a failed step."""
+        self._pending_fix_cmds.clear()
+        self._fix_running = False
+        self._fix_password = None
+        self.run_btn.setEnabled(True)
+        self._refresh_fix_statuses()
+        if self._selected_fix_idx is not None:
+            self._show_fix_detail(self._selected_fix_idx)
+        self.terminal.append_warn(
+            "Fix stopped because a command failed. Earlier steps may have changed "
+            "the system; review the output before retrying or rolling back."
+        )
 
     # ── Fix definitions — steps (shown to user) and commands (what runs) ──
     def _fix_ufw(self):
@@ -3799,7 +3825,7 @@ class LynisPanel(QWidget, WorkerMixin):
             self.status.setText("Action cancelled.")
         return pw
 
-    def run_lynis(self, on_complete=None):
+    def run_lynis(self, on_complete=None, on_failed=None):
         """Check if Lynis is installed, offer to install it, then run the audit."""
         if not shutil.which("lynis"):
             reply = QMessageBox.question(
@@ -3823,7 +3849,12 @@ class LynisPanel(QWidget, WorkerMixin):
                 )
                 w.output_ready.connect(lambda t: self.terminal.append(t, T["OK"]))
                 w.error_ready.connect(self.terminal.append_err)
-                w.finished_ok.connect(lambda: self.run_lynis(on_complete=on_complete))  # Retry after install
+                w.finished_ok.connect(
+                    lambda: self.run_lynis(on_complete=on_complete, on_failed=on_failed)
+                )  # Retry only after a successful install
+                w.failed.connect(lambda: self.status.setText("Lynis installation failed."))
+                if on_failed:
+                    w.failed.connect(on_failed)
                 self._start_worker(w)
             return
 
@@ -4033,6 +4064,7 @@ class CvePanel(QWidget, WorkerMixin):
         self.findings = findings
         self._scan_cve_done_cb = None
         self._scan_upgrades_done_cb = None
+        self._scan_upgrades_failed_cb = None
         self._cve_scan_serial = 0
         self._cve_active_scan_id = 0
         self._cve_total = 0
@@ -4252,10 +4284,11 @@ class CvePanel(QWidget, WorkerMixin):
             if isinstance(w, HttpWorker):
                 w.cancel()
 
-    def scan_upgrades(self, on_complete=None):
+    def scan_upgrades(self, on_complete=None, on_failed=None):
         """Check which packages have newer versions available.
         Uses DEBIAN_FRONTEND=noninteractive so apt never waits for user input."""
         self._scan_upgrades_done_cb = on_complete
+        self._scan_upgrades_failed_cb = on_failed
         # Clear any stale rows from a previous CVE scan — this panel is shared
         # between the "CVE" and "available updates" buttons, so the table must
         # reset every time the user switches.
@@ -4280,16 +4313,19 @@ class CvePanel(QWidget, WorkerMixin):
         w.output_ready.connect(self._parse_upgrades)
         w.error_ready.connect(self.terminal.append_err)
         w.finished_ok.connect(lambda: self.status.setText("Update check complete."))
+        w.failed.connect(lambda: self.status.setText("Update check failed — see terminal output."))
         w.finished_ok.connect(self._finish_upgrades_scan)
+        w.failed.connect(lambda: self._finish_upgrades_scan(succeeded=False))
         self._start_worker(w)
 
-    def _finish_upgrades_scan(self):
-        """Finalize updates scan callback."""
-        if self._scan_upgrades_done_cb:
-            try:
-                self._scan_upgrades_done_cb()
-            finally:
-                self._scan_upgrades_done_cb = None
+    def _finish_upgrades_scan(self, succeeded=True):
+        """Release callback state on either outcome, then notify the right caller."""
+        callback = (self._scan_upgrades_done_cb if succeeded
+                    else self._scan_upgrades_failed_cb)
+        self._scan_upgrades_done_cb = None
+        self._scan_upgrades_failed_cb = None
+        if callback:
+            callback()
 
     def _parse_upgrades(self, text):
         """Parse apt upgrade output and add outdated packages to findings.
@@ -4475,7 +4511,7 @@ class ToolCard(QFrame):
         w = CommandWorker(cmd, sudo=True, timeout=180, password=sudo_password)
         w.output_ready.connect(lambda t: self.terminal.append(t, T["OK"]))
         w.error_ready.connect(self.terminal.append_err)
-        w.finished_ok.connect(self._check_installed)
+        w.finished.connect(self._check_installed)
         # Track worker manually for this simple case
         w.finished.connect(lambda: self._workers.discard(w))
         self._workers.add(w)
@@ -5474,7 +5510,14 @@ class SideBar(QWidget, WorkerMixin):
             lambda: self.terminal.append_ok(f"{label} complete.")
         )
         w.finished_ok.connect(self._post_scan_check)
+        w.failed.connect(self._scan_failed)
         self._start_worker(w)
+
+    def _scan_failed(self):
+        """Clear pending UI bookkeeping without declaring the scan successful."""
+        self._pending_section_action = None
+        self.findings.hide_all_ok_banner()
+        self.terminal.append_warn("Scan failed — results may be incomplete.")
 
     def _post_scan_check(self):
         """After any scan completes, show the all-ok banner if nothing bad was found."""
@@ -5798,7 +5841,9 @@ class SideBar(QWidget, WorkerMixin):
         """Run Lynis audit — switch to the Lynis page to show results."""
         self._pre_scan(L("btn_lynis"), "checks", "lynis")
         self.stack.setCurrentIndex(2)  # Page 2 = LynisPanel
-        self.lynis_panel.run_lynis(on_complete=self._post_scan_check)
+        self.lynis_panel.run_lynis(
+            on_complete=self._post_scan_check, on_failed=self._scan_failed
+        )
 
     def _guided_wizard(self):
         """Open the step-by-step fix wizard dialog."""
@@ -5828,7 +5873,9 @@ class SideBar(QWidget, WorkerMixin):
         """Check for available updates — switch to CVE page."""
         self._pre_scan(L("btn_upgrades"), "cve", "upgrades")
         self.stack.setCurrentIndex(1)  # Page 1 = CvePanel
-        self.cve_panel.scan_upgrades(on_complete=self._post_scan_check)
+        self.cve_panel.scan_upgrades(
+            on_complete=self._post_scan_check, on_failed=self._scan_failed
+        )
 
     # ── Tools and undo ────────────────────────────────────────────────────
     def _show_tools(self):
