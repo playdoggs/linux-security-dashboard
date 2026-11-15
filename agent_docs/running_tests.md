@@ -211,8 +211,8 @@ parser exceptions and partial output retain incomplete status and existing warni
 Installation-to-audit handoff retains one lease and rejects late installation signals.
 No actual sudo, tool install, network scan or host configuration operation runs.
 
-These tests do not prove window-close/shutdown handling, arbitrary third-party
-callbacks or all real Lynis formats. They model one application instance; other
+These Stage 4E tests do not prove window-close/shutdown handling, arbitrary
+third-party callbacks or all real Lynis formats; Stage 4F coverage is described below. They model one application instance; other
 processes remain outside its GUI ownership coordinator.
 
 ### Stage 4E startup rollback acceptance regressions
@@ -226,3 +226,60 @@ must not mask original startup errors, and once-only delete scheduling. Retrying
 scan must succeed after rollback; delayed old completion must not retire its worker.
 Existing fast/queued/post-dispatch cases still require real completion before release.
 Signal doubles implement disconnect, allowing assertions on partial registration.
+
+## Increment 4 Stage 4F shutdown and HTTP bounds
+
+`tests/test_shutdown_http.py` extracts production shutdown, worker ownership and
+HTTP definitions without importing the application or launching widgets. Controlled
+signals cover idle/active/repeated close, cancel shutdown, finishing during the
+confirmation, seven-step/legacy sequences, blocked scans/clear/fixes/profile,
+queued/duplicate/late callbacks and guided-fix close/Escape. Real QThreads and a
+QCoreApplication test result delivery during shutdown and ownership retained until
+actual `finished`; a non-running worker awaiting queued cleanup still blocks close.
+
+HTTP tests use mocks for socket timeout, shared-budget exhaustion and late success,
+and the production CVE result handler to verify deadline errors prevent complete
+coverage. A loopback-only temporary HTTP server exercises a normal response, stalled
+headers/body, trickled bytes, a shorter socket timeout and response overflow against
+actual isolated helper processes. Deadline tests assert the helpers are reaped;
+fixtures use bounded waits and shut down their server/request threads. This requires
+local socket permission (the restricted agent sandbox may require an approved test
+run outside it). No external endpoint, sudo, package change or host probe is used.
+
+These checks do not validate the full GUI, real Qt widget destruction, desktop
+session exit, arbitrary external callbacks, frozen/embedded Python packaging or
+uninterruptible kernel behaviour. No application-state database is created.
+
+### Guided-fix startup rollback acceptance correction
+
+`GuidedFixStartup` exercises the full production guided-wizard class with only its
+QDialog base, status probes and commands replaced by inert doubles. Base dismissal
+is observable, so recovery tests actually reach the superclass close/done paths.
+Production WorkerMixin and ownership run unchanged. Initial and subsequent command
+startup failures must leave no phantom worker, clear chain/password references,
+restore Run/dismissal, preserve existing findings/history and report failure.
+Post-dispatch failures keep the dialog protected and credentials available until
+actual completion, including fast completion followed by a start exception.
+
+Ten regressions cover these paths, partial cleanup connection failure, refresh
+failure, duplicate/stale signals, normal multi-command progress and a real QThread
+that starts then raises. The initial seven fault-injection tests all failed against
+the rejected code, including both original command-position reproductions; they
+passed after correction. The real-thread fixture uses QCoreApplication, a bounded
+Event wait and guaranteed thread cleanup, without launching widgets or commands.
+Clearing Python credential references is not a secure memory-erasure guarantee.
+
+### Guided-fix sequencing correction
+
+Three additional `GuidedFixStartup` tests cover success before native completion,
+failure before native completion, and both outcomes through real gated QThreads.
+The two controlled-signal regressions failed against the previous code: success
+started a second worker early, while failure reset `_fix_running` early. They now
+assert controls/credentials/ownership remain protected until `finished`, exactly-once
+progression, duplicate callback isolation and successful normal chain completion.
+The real thread emits its terminal signal and remains running behind a bounded
+Event gate; no command is executed. First/subsequent startup-failure regressions
+remain in the same suite. Two earlier synchronous CommandOutcomes fixtures now
+explicitly model native completion after calling `run()`; calling `run()` alone
+never emits Qt's automatic `finished` notification. The existing real-thread
+partial-failure test continues to use actual Qt completion.

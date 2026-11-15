@@ -276,9 +276,9 @@ The assessment adapter recognizes completed starter rollback to avoid duplicate
 No worker is terminated to solve rollback errors.
 
 This is GUI-state isolation, not an OS-wide lock or atomic view of the host.
-Other processes can still change the system. Stage 4F should exercise full GUI
-flows, closing widgets with active threads, cooperative cancellation/HTTP deadlines
-and supported real Lynis versions; those are not proven by mocked widgets.
+Other processes can still change the system. See the Stage 4F lifecycle below for
+shutdown and HTTP bounds. Full GUI flows and supported real Lynis versions remain
+unverified by mocked widgets.
 
 ---
 
@@ -371,7 +371,7 @@ This is a desktop GUI; the only external API is the Ubuntu CVE endpoint.
 | Surface | Where | Notes |
 |---|---|---|
 | **CLI** | `python3 linux-security-dashboard.py` or `linux-security-dashboard` (deb launcher [packaging/linux-security-dashboard](packaging/linux-security-dashboard)) | No flags; all config via the GUI |
-| **HTTP (outbound)** | `https://ubuntu.com/security/cves.json?package=<pkg>&limit=5` [1494-1499](linux-security-dashboard.py#L1494-L1499) | UA: `linux-audit/4.2`; system trust store; ~28 packages per scan; 8s timeout, 2 attempts |
+| **HTTP (outbound)** | `https://ubuntu.com/security/cves.json?package=<pkg>&limit=5` [1494-1499](linux-security-dashboard.py#L1494-L1499) | UA: `linux-audit/4.2`; system trust store; ~28 packages per scan; 8s socket timeout, up to 2 attempts/package within a 60s batch deadline; 2 MiB/response |
 | **TCP probe (outbound)** | `1.1.1.1:443` [727-737](linux-security-dashboard.py#L727-L737) | Connectivity gate; no payload sent |
 | **Crontab entry** | User crontab; marker `# audit-dashboard-schedule` [4557](linux-security-dashboard.py#L4557) | Read-only `apt list --upgradable` redirected to `~/.audit-dashboard-schedule.log` |
 | **Subprocess execs** | argv lists only — `subprocess.run`/`Popen`, no `shell=True` (verified) | Sudo via `sudo -S` + stdin password OR `sudo` with `stdin=DEVNULL` for cached |
@@ -425,3 +425,78 @@ TerminalPanel FindingsTable LynisPanel      CvePanel         ToolsPanel       Un
 4. **Globals vs DI.** `RISK`, `SESSION`, `UNDO_LOG`, `IGNORE_LIST`, `T`, `LANG`, `BASE_FS`, `PKG_MGR` are module-level singletons accessed from every panel. Testability and reasoning suffer; would dependency injection through `AuditDashboard` be worth the churn? See [R-002](CODE_REVIEW.md#r-002).
 5. **Synchronous main-thread scans.** `run_quick_checks` ([2734](linux-security-dashboard.py#L2734)) and the wizard's per-fix re-checks ([3346-3355](linux-security-dashboard.py#L3346-L3355)) run subprocesses on the main thread. Brief freezes are noticeable when the wizard opens. Should those move to workers? See [P-004](PERFORMANCE.md#p-004).
 6. **Cross-distro parity.** `pkg_install`/`pkg_remove`/`pkg_installed` cover apt/dnf/pacman, but inventory scans (`_scan_os_installed`, `_scan_user_installed`) and CVE lookups (Ubuntu API only) are apt-only. Roadmap acknowledges this — needs an architectural decision before adding more apt-specific paths.
+
+## Increment 4 Stage 4F shutdown and HTTP execution
+
+The shared `ScanOwnership` also holds the shutdown lifecycle: `running`,
+`shutdown_requested`, `waiting`, `safe_to_close`. Dashboard close requests accept
+immediately only when no ownership token or worker references remain. Otherwise a
+confirmation offers waiting for completion or cancelling shutdown. The still-live
+window keeps processing queued results and actual Qt `finished` cleanup. A single
+parent-owned 100 ms timer checks for drain; it does not sequence assessment steps
+or block the GUI with `wait()`. Repeated requests reuse this timer. Cancelling
+shutdown restores admission; it never claims to cancel the active operation.
+
+New top-level scans, fixes, undo, clears and profile changes are rejected while
+shutdown is requested/waiting. Existing identity-bearing continuations may finish
+the current seven-step or legacy three-step sequence. Completion updates coverage
+and outcomes normally; the toolbar summary popup is suppressed during shutdown.
+Once safe to close, guarded scan callbacks are inert. The guided fix dialog also
+refuses close/Escape while its workers or fix chain remain active. The old unused
+`_stop_all_workers` method is now a non-mutating idle check: no thread termination,
+reference clearing or GUI-thread waits occur there.
+
+`HttpWorker` uses an isolated Python helper process for each urllib request, retaining
+its QThread owner until actual completion. Fixed source is passed with `-I -c`,
+without a shell, application import, sudo or stdin. TLS uses urllib's default system
+certificate verification. The socket timeout is at most 8 seconds; this bounds
+individual blocking socket operations, not total elapsed time. One monotonic
+60-second budget covers the whole package batch, retries, DNS/headers/body and
+helper execution. A helper exceeding the remaining budget is killed and reaped by
+`subprocess.run`; only that unprivileged direct child is affected. Responses read at
+most 2 MiB plus one overflow-detection byte; overflow is discarded as an error,
+never parsed as successful evidence. At most two attempts per package share the
+budget, with no retry sleep. Unchecked packages receive timeout records after the
+budget expires. Batch `finished_ok` means response processing ended, not that
+coverage succeeded; CVE coverage still counts actual usable responses.
+
+Process creation, kernel stalls and scheduler delays can exceed wall-clock bounds.
+In particular, direct-child reaping may wait in the HTTP QThread under OS failure;
+the GUI remains responsive and closure stays deferred rather than abandoning it.
+No forced QThread cancellation or command-worker termination changes were added.
+External forced exit, crashes, desktop-session termination, real GUI/platform
+teardown and frozen/embedded Python packaging have not been validated. The helper
+requires a normal Python interpreter at `sys.executable` with standard-library
+networking support. Forced exit during undo retains the existing SQLite pending /
+outcome-unknown recovery semantics; shutdown does not manufacture success.
+
+### Guided-fix startup rollback correction
+
+Each guided command now has a small startup/terminal guard in `_run_next_fix_cmd`.
+Logical outcomes received during `start()` are deferred until it returns. Confirmed
+pre-dispatch failure stops the pending chain, clears its password references,
+restores Run and refreshes status without declaring success. This applies to both
+the first command and later commands. A refresh error cannot restore a stuck
+running flag or replace the recorded startup error.
+
+A startup exception after dispatch is not completion: the dialog retains its
+running flag, worker/ownership references and password until actual Qt `finished`.
+Then the chain fails once, clears the dialog and affected worker password references
+and restores dismissal after worker cleanup. Fast completion followed by an
+exception also fails rather than dispatching the next command. Duplicate logical
+outcomes cannot stop or advance a later step. Normal successful command chaining
+is preserved; this does not change command-worker execution, dashboard shutdown,
+HTTP helpers, ownership coordination, undo history or risk/coverage calculations.
+
+### Guided-fix outcome / thread completion boundary
+
+Guided commands record logical success/failure independently of Qt `finished`.
+The per-command guard now waits for actual thread completion on every dispatched
+path, including ordinary success and failure. Success can advance exactly once
+only after both notifications; failure restores controls and stops the chain only
+once the thread has completed. Until then the fix-running flag, Run-disabled state,
+password and worker references remain protected. Completion without an observed
+command outcome remains an unknown/failure, never an automatic successful step.
+Confirmed pre-dispatch startup failure still performs immediate recovery because
+there is no running worker to await. Ownership cleanup remains WorkerMixin's job;
+advancing one command cannot retire the next command's worker.

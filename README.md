@@ -34,6 +34,11 @@ This tool assumes you don't — and that's fine.
   the active operation finishes. A blocked request explains why; retry afterward.
   Lynis uses captured output from the current attempt, never an old shared log.
   Unrecognized or incomplete Lynis summaries remain unknown rather than clean.
+- **Safe close** — closing during active work offers to wait or cancel shutdown.
+  Work continues with its results preserved; new scans and fixes are blocked while
+  waiting. Close again to cancel shutdown. Running operations are not force-cancelled.
+  CVE requests have a 60-second batch budget and a 2 MiB response limit; unavailable
+  results remain incomplete, even if earlier requests succeeded.
 - **Offline-aware** — detects no internet and advises you; CVE and tool install gracefully skip with a clear message
 - **Live progress in terminal** — every multi-item scan shows `[N/TOTAL] …` as it runs
 - **Risk Score** — 0 to 100, updates live as scans run

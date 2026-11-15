@@ -224,3 +224,22 @@ evidence remains unknown and partial findings remain visible. Command allowlists
 SQLite undo claims/outcomes and existing user/sudo confirmation are preserved.
 No process-group kill, recursive termination or additional privileged operation was
 introduced. Other processes can still change the host during assessment.
+
+## Increment 4 Stage 4F shutdown and HTTP boundary (pending acceptance review)
+
+Window closure waits for the current operation and actual Qt completion; pending
+undo or remediation is not cancelled or declared successful by shutdown. Admission
+blocks new evidence-changing operations while waiting. Cancelling shutdown resumes
+normal admission without releasing active worker ownership. The fix wizard cannot
+be dismissed while its worker/fix chain is active. No thread is forcibly terminated.
+
+HTTP requests now run fixed standard-library code in a direct, unprivileged Python
+helper with no shell, sudo, stdin or application import. The helper retains default
+TLS verification and reads bounded responses. A parent-enforced batch deadline can
+kill/reap only this helper, including during stalled headers/body or trickling data.
+It grants no new capabilities and changes no command-worker cleanup or undo
+validation. DNS/process creation/kernel stalls are not hard real-time guarantees;
+OS-level reaping delays defer closure while the GUI continues processing events.
+See [ARCHITECTURE.md](ARCHITECTURE.md#increment-4-stage-4f-shutdown-and-http-execution)
+for exact limits and packaging assumptions. External forced termination is outside
+the graceful-close contract; persistence recovery remains fail-closed.

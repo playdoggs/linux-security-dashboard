@@ -121,7 +121,10 @@ class CommandOutcomes(unittest.TestCase):
                               _refresh_fix_statuses=Mock(), _show_fix_detail=Mock())
         obj._run_next_fix_cmd = lambda: advance(obj)
         obj._fix_failed = lambda: stop(obj)
-        obj._start_worker = lambda worker: worker.run()
+        def start_fixture(worker):
+            worker.run()
+            worker.finished.emit()  # Model Qt completion after the command outcome.
+        obj._start_worker = start_fixture
         with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 1, b"", b"failed")) as run:
             advance(obj)
         self.assertEqual(run.call_count, 1)
@@ -180,7 +183,10 @@ class CommandOutcomes(unittest.TestCase):
                               _selected_fix_idx=None, run_btn=Mock(), terminal=Mock(),
                               _refresh_fix_statuses=Mock(), _fix_failed=Mock())
         obj._run_next_fix_cmd = lambda: advance(obj)
-        obj._start_worker = lambda worker: worker.run()
+        def start_fixture(worker):
+            worker.run()
+            worker.finished.emit()  # Model Qt completion after the command outcome.
+        obj._start_worker = start_fixture
         with patch.dict(NS, QMessageBox=SimpleNamespace(information=Mock())):
             with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"", b"")) as run:
                 advance(obj)

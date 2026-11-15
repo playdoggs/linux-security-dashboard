@@ -2168,50 +2168,73 @@ class HttpWorker(QThread):
             return "timeout"
         return "error"
 
-    def run(self):
-        """Fetch CVE data for each package with light retries."""
-        import ssl
-        # Use the system's trusted certificate store for secure connections
-        ctx = ssl.create_default_context()
+    # A socket timeout alone does not bound DNS, headers or a trickling body.
+    # Keep urllib in an isolated, unprivileged direct child; only this child is
+    # killed on deadline. No shell, application import, credentials or sudo.
+    TOTAL_DEADLINE_SECS = 60
+    MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+    REQUEST_SCRIPT = r"""
+import sys, json, urllib.request, urllib.error
+url, timeout, limit = sys.argv[1], float(sys.argv[2]), int(sys.argv[3])
+try:
+    req = urllib.request.Request(url, headers={"User-Agent": "linux-audit/4.2"})
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        body = response.read(limit + 1)
+    if len(body) > limit:
+        raise ValueError("HTTP response exceeds size limit")
+    sys.stdout.buffer.write(body)
+except Exception as exc:
+    kind = "timeout" if isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError) else "network"
+    sys.stdout.write(json.dumps({"_error": kind, "_detail": str(exc)[:512]}))
+"""
 
-        for name, version in self.packages:
-            if self._cancelled:
-                break
-            err_class = "error"
-            err_text = "Unknown error"
-            for attempt in range(1, self.MAX_ATTEMPTS + 1):
+    def _request_url(self, name):
+        return ("https://ubuntu.com/security/cves.json"
+                f"?package={urllib.parse.quote(name)}&limit=5")
+
+    def _fetch(self, url, remaining):
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", self.REQUEST_SCRIPT, url,
+             str(min(self.TIMEOUT_SECS, remaining)), str(self.MAX_RESPONSE_BYTES)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, timeout=remaining, check=False)
+        # run() kills and reaps its own direct child on timeout. Kernel stalls
+        # may delay reaping; the QThread remains owned until it actually ends.
+        if result.returncode or len(result.stdout) > self.MAX_RESPONSE_BYTES:
+            raise ValueError("HTTP helper failed or response exceeded size limit")
+        data = json.loads(result.stdout)
+        if not isinstance(data, dict):
+            raise ValueError("HTTP response is not an object")
+        return data
+
+    def run(self):
+        """One monotonic budget for all requests, retries and response reading."""
+        deadline = time.monotonic() + self.TOTAL_DEADLINE_SECS
+        try:
+            for name, version in self.packages:
                 if self._cancelled:
                     break
-                try:
-                    url = (f"https://ubuntu.com/security/cves.json"
-                           f"?package={urllib.parse.quote(name)}&limit=5")
-                    req = urllib.request.Request(
-                        url, headers={"User-Agent": "linux-audit/4.2"}
-                    )
-                    with urllib.request.urlopen(req, timeout=self.TIMEOUT_SECS, context=ctx) as r:
-                        data = json.loads(r.read())
-                    if self._cancelled:
+                data = {"_error": "timeout", "_detail": "HTTP total deadline exceeded"}
+                for attempt in range(self.MAX_ATTEMPTS):
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 or self._cancelled:
                         break
+                    try:
+                        data = self._fetch(self._request_url(name), remaining)
+                        if time.monotonic() >= deadline:
+                            data = {"_error": "timeout", "_detail": "HTTP total deadline exceeded"}
+                        if "_error" not in data:
+                            break
+                    except Exception as exc:
+                        kind = "timeout" if isinstance(exc, subprocess.TimeoutExpired) else self._classify_error(exc)
+                        detail = "HTTP total deadline exceeded" if isinstance(exc, subprocess.TimeoutExpired) else str(exc)[:512]
+                        data = {"_error": kind, "_detail": detail}
+                    # No retry sleep: retries share the same overall budget.
+                if not self._cancelled:
                     self.result_ready.emit(name, (version, data))
-                    err_class = None
-                    break
-                except Exception as e:
-                    err_class = self._classify_error(e)
-                    err_text = str(e)
-                    logging.error(
-                        f"CVE fetch {name} (attempt {attempt}/{self.MAX_ATTEMPTS}): {e}"
-                    )
-                    if attempt < self.MAX_ATTEMPTS:
-                        time.sleep(float(attempt))
-            if self._cancelled:
-                break
-            if err_class is not None:
-                self.result_ready.emit(
-                    name,
-                    (version, {"_error": err_class, "_detail": err_text})
-                )
-
-        self.finished_ok.emit()
+        finally:
+            # Batch completion only; CVE coverage is based on usable responses.
+            self.finished_ok.emit()
 
 
 class ScanOwnership:
@@ -2221,8 +2244,12 @@ class ScanOwnership:
         self.label = None
         self.depth = 0
         self.workers = set()
+        self.shutdown_state = "running"
 
     def enter(self, label, token=None):
+        # Existing nested/sequence work may finish while closure is deferred.
+        if self.shutdown_state != "running" and (token is None or token != self.token):
+            return None
         if self.token is not None:
             if token != self.token:
                 return None
@@ -2278,7 +2305,10 @@ def scan_operation(function):
         prior_token = getattr(self, "_scan_token", None)
         token = owner.enter(label, continuation)
         if token is None:
-            self.terminal.append_warn(f"Cannot start {label}: {owner.label or 'the prior operation'} owns the results. Wait for completion.")
+            if owner.shutdown_state != "running":
+                self.terminal.append_warn("Shutdown pending. Wait for active work, or cancel shutdown to start new work.")
+            else:
+                self.terminal.append_warn(f"Cannot start {label}: {owner.label or 'the prior operation'} owns the results. Wait for completion.")
             return False
         body_entered = False
         prior_coverage = coverage_snapshot = banner = banner_visible = None
@@ -2371,7 +2401,8 @@ def scan_slot(widget, worker, callback, success=False, once=False):
     def apply(*args):
         nonlocal called
         if record is not None:
-            if not record["live"] or record["owner"].token != record["token"]:
+            if (not record["live"] or record["owner"].token != record["token"]
+                    or record["owner"].shutdown_state == "safe_to_close"):
                 return
             if success and record["error"]:
                 return
@@ -2518,12 +2549,8 @@ class WorkerMixin:
         report()
 
     def _stop_all_workers(self):
-        """Stop all running workers. Call when the widget is closed."""
-        for w in list(self._workers):
-            if w.isRunning():
-                w.quit()    # Ask the thread to stop
-                w.wait(500) # Wait up to 500ms for it to stop cleanly
-        self._workers.clear()
+        """Compatibility check only: never discard or terminate active threads."""
+        return not self._workers
 
     @property
     def _any_running(self):
@@ -4227,6 +4254,19 @@ class GuidedWizard(QDialog, WorkerMixin):
     Shows the fix list first, then details when user selects one.
     Nothing runs until the user explicitly clicks RUN."""
 
+    def done(self, result):
+        if self._workers or self._fix_running:
+            self.terminal.append_warn("Fix still running. Keep this window open until it finishes.")
+            return
+        super().done(result)
+
+    def closeEvent(self, event):
+        if self._workers or self._fix_running:
+            self.terminal.append_warn("Fix still running. Keep this window open until it finishes.")
+            event.ignore()
+        else:
+            super().closeEvent(event)
+
     def __init__(self, terminal, parent=None):
         super().__init__(parent)
         self._init_workers()
@@ -4492,16 +4532,76 @@ class GuidedWizard(QDialog, WorkerMixin):
             )
             return
 
-        cmd_list, cmd_str = self._pending_fix_cmds.pop(0)
-        self.terminal.append_cmd(f"sudo {cmd_str}")
-        w = CommandWorker(
-            cmd_list, sudo=True, timeout=120, password=self._fix_password
-        )
-        w.output_ready.connect(scan_slot(self, w, lambda t: self.terminal.append(t, T["OK"]), success=False, once=False))
-        w.error_ready.connect(scan_slot(self, w, self.terminal.append_err, success=False, once=False))
-        w.finished_ok.connect(scan_slot(self, w, self._run_next_fix_cmd, success=True, once=True))
-        w.failed.connect(scan_slot(self, w, self._fix_failed, success=False, once=True))
-        self._start_worker(w)
+        # A logical outcome and native Qt completion are independent boundaries.
+        # Also defer handling until startup returns in case it subsequently raises.
+        state = {"starting": True, "finished": False, "handled": False,
+                 "terminal": None, "error": None}
+        w = None
+        def finish():
+            if state["starting"] or state["handled"] or not state["finished"]:
+                return  # Retain the chain, controls and password until Qt completion.
+            if state["error"] is not None:
+                state["handled"] = True
+                if w is not None:
+                    w.password = None  # No dispatched work remains to consume it.
+                try:
+                    self._fix_failed()
+                except Exception as exc:
+                    # Core flags/password are reset before status refreshes. A
+                    # refresh failure must not hide the original startup error.
+                    try:
+                        self.terminal.append_err(f"Fix status refresh failed: {exc}")
+                    except Exception:
+                        pass
+            elif state["terminal"] is not None:
+                state["handled"] = True
+                if state["terminal"]:
+                    self._run_next_fix_cmd()
+                else:
+                    self._fix_failed()
+        def outcome(succeeded):
+            if state["terminal"] is None:
+                state["terminal"] = succeeded
+                finish()
+        def finished():
+            state["finished"] = True
+            if state["terminal"] is None and state["error"] is None:
+                state["error"] = "Fix worker finished without a command outcome"
+                self.terminal.append_err(state["error"])
+            finish()
+        try:
+            cmd_list, cmd_str = self._pending_fix_cmds.pop(0)
+            self.terminal.append_cmd(f"sudo {cmd_str}")
+            w = CommandWorker(
+                cmd_list, sudo=True, timeout=120, password=self._fix_password
+            )
+            w.output_ready.connect(scan_slot(self, w, lambda t: self.terminal.append(t, T["OK"]), success=False, once=False))
+            w.error_ready.connect(scan_slot(self, w, self.terminal.append_err, success=False, once=False))
+            w.finished_ok.connect(scan_slot(self, w, lambda: outcome(True), success=True, once=True))
+            w.failed.connect(scan_slot(self, w, lambda: outcome(False), success=False, once=True))
+            # Connect before dispatch, before WorkerMixin's unconditional cleanup.
+            w.finished.connect(scan_slot(self, w, finished, success=False, once=True))
+            self._start_worker(w)
+        except Exception as exc:
+            state["error"] = str(exc)
+            dispatched = state["finished"]
+            if w is not None:
+                record = getattr(w, "_scan_record", None)
+                if record is not None:
+                    record["error"] = str(exc)
+                try:
+                    dispatched = dispatched or w.isRunning() or w.isFinished()
+                except Exception:
+                    dispatched = True  # Uncertain Qt state: retain protection.
+            if not dispatched:
+                state["finished"] = True  # Confirmed no worker to wait for.
+            try:
+                self.terminal.append_err(f"Fix command startup failed: {exc}")
+            except Exception:
+                pass
+        finally:
+            state["starting"] = False
+        finish()
 
     def _fix_failed(self):
         """Stop dependent commands and restore controls after a failed step."""
@@ -8219,6 +8319,59 @@ class AuditDashboard(QMainWindow):
             "Nothing changes on your system until you confirm an action."
         )
 
+    def _shutdown_busy(self):
+        owner = scan_owner(self)
+        # References, not isRunning(): queued results/finished still need delivery.
+        return bool(owner and (owner.token is not None or owner.workers))
+
+    def closeEvent(self, event):
+        owner = scan_owner(self)
+        if owner is None:
+            event.accept()
+            return
+        if owner.shutdown_state == "safe_to_close":
+            event.accept()
+            return
+        if owner.shutdown_state == "shutdown_requested":
+            event.ignore()  # A close-confirmation dialog is already open.
+            return
+        owner.shutdown_state = "shutdown_requested"
+        if not self._shutdown_busy():
+            owner.shutdown_state = "safe_to_close"
+            event.accept()
+            return
+        event.ignore()
+        # The dialog runs a nested event loop: ownership must already block new
+        # work; workers/results continue normally against still-live widgets.
+        answer = QMessageBox.question(
+            self, "Work still running",
+            "Wait for active work, then close? Choose No to cancel shutdown. "
+            "Running operations will not be cancelled.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes)
+        if answer != QMessageBox.StandardButton.Yes:
+            owner.shutdown_state = "running"
+            self.statusBar().showMessage("Shutdown cancelled. Active work continues.")
+            return
+        owner.shutdown_state = "waiting"
+        self.statusBar().showMessage("Waiting for active work before closing. Close again to cancel shutdown.")
+        if not hasattr(self, "_shutdown_timer"):
+            self._shutdown_timer = QTimer(self)
+            self._shutdown_timer.setInterval(100)
+            self._shutdown_timer.timeout.connect(self._check_shutdown)
+        self._shutdown_timer.start()
+        self._check_shutdown()
+
+    def _check_shutdown(self):
+        owner = scan_owner(self)
+        if owner.shutdown_state != "waiting":
+            self._shutdown_timer.stop()
+            return
+        if not self._shutdown_busy():
+            self._shutdown_timer.stop()
+            owner.shutdown_state = "safe_to_close"
+            self.close()
+
     @scan_operation
     def _detect_profile(self):
         """Auto-detect the system profile and offer confirmation dialog."""
@@ -8325,7 +8478,8 @@ class AuditDashboard(QMainWindow):
     def _run_everything(self):
         """Toolbar handler — chain every non-sudo scan, then show assessment."""
         def _show_summary():
-            RunEverythingSummaryDialog(self.findings, self.profile_key, self).exec()
+            if scan_owner(self).shutdown_state == "running":
+                RunEverythingSummaryDialog(self.findings, self.profile_key, self).exec()
         self.sidebar.run_everything(on_complete=_show_summary)
 
     def _generate_report(self):

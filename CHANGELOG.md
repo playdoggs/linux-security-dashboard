@@ -5,6 +5,20 @@ All notable changes to Linux Security Dashboard are documented here.
 ## [Unreleased] — v4.2.1
 
 ### Changed
+- Stage 4F guided-fix sequencing correction: success/failure signals now record
+  command outcomes without advancing/restoring controls until Qt `finished`.
+  Preserve immediate recovery for confirmed pre-dispatch startup failures.
+- Stage 4F acceptance correction: recover guided-fix state after first/later
+  pre-dispatch startup failure; stop the chain, clear temporary credentials and
+  restore dismissal. Post-dispatch exceptions retain close protection until Qt
+  completion. Startup and duplicate terminal callbacks cannot falsely advance.
+- Increment 4 Stage 4F: defer window closure until actual worker/operation completion;
+  reject new work during shutdown, support cancelling shutdown, retain guided-fix
+  dialogs while active, and suppress shutdown-time assessment popups. Remove the
+  unused helper's unsafe reference clearing and ineffective thread quit/wait.
+- Bound CVE HTTP requests through unprivileged isolated Python helpers: 60-second
+  total batch budget, 8-second socket timeout, 2 MiB response limit. Deadline and
+  response errors remain incomplete evidence. Command workers are unchanged.
 - Increment 4 Stage 4E: add shared operation/worker identities to isolate findings,
   coverage, status and report inputs. Reject conflicting requests before clearing
   or authorization; ignore retired/duplicate scan callbacks and retain workers

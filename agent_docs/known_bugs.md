@@ -19,7 +19,7 @@ Audit date: **2026-04-23**
   `full_output` after any failure is diagnostic material, not complete evidence.
 
 
-### Assessment scope and remaining integration (Stage 4F)
+### Assessment scope and remaining integration
 - Stage 4D reports evidence coverage independently of findings. Coverage describes
   the selected checks at scan time, not ongoing system state or certification.
 - CVE requests cover selected apt packages with at most five returned records per
@@ -143,9 +143,9 @@ Audit date: **2026-04-23**
   operation's ownership. Preserve Stage 4C run UUID/index/once-only finalization.
 - Lynis evidence comes only from current successful captured stdout. Shared logs,
   missing/empty output and unrecognized completion summaries are not success.
-- Remaining: full GUI close/shutdown behaviour, HTTP total execution deadlines,
-  real platform permissions and real-version Lynis format compatibility require
-  Stage 4F validation. No cross-process/system-wide scan lock is claimed.
+- Stage 4F adds tested shutdown guards and HTTP batch deadlines; full GUI/platform
+  teardown, real permissions and real-version Lynis compatibility remain unverified.
+  No cross-process/system-wide scan lock is claimed.
 
 ### Stage 4E startup rollback guards
 - All preparation after successful admission must remain inside guaranteed cleanup,
@@ -156,3 +156,35 @@ Audit date: **2026-04-23**
   operation. A start exception alone is not proof that no worker ran.
 - Preserve original errors if UI restoration/delete scheduling fails. Never delete
   or release a live/dispatched worker to recover the coordinator.
+
+### Shutdown / HTTP regression guards (Increment 4 Stage 4F)
+- Wait for actual Qt completion and the current assessment chain, not only a
+  logical command outcome or `isRunning() == False`. Never clear live references.
+- Cancel shutdown restores admission without cancelling work. New work stays
+  blocked while waiting; current run UUID/continuations remain valid.
+- Socket timeout alone cannot bound DNS/headers/trickling response bodies. HTTP
+  helpers share a 60-second batch budget and bounded responses; errors/expiry
+  cannot count as usable CVE evidence. Only the owned unprivileged helper is killed.
+- Full GUI close/cancel/platform teardown, external termination and frozen Python
+  packaging are not validated by these tests. Kernel/process creation stalls may
+  exceed deadlines; do not claim real-time bounds or confirmed cancellation.
+
+### Guided-fix startup failure regression guards (Stage 4F correction)
+- First/later pre-dispatch failure must reset `_fix_running`, clear pending commands
+  and temporary password references, restore Run and permit dismissal once no
+  workers remain. A status-refresh failure must not strand the core fix state.
+- Do not infer pre-dispatch from a startup exception. Running, finished-but-queued
+  and uncertain Qt state retain protection until actual completion. No worker is
+  killed, discarded or released by guided-fix recovery.
+- Defer outcomes during startup; fast success followed by an exception cannot
+  advance the chain. Handle each command terminal outcome at most once so old
+  callbacks cannot stop or unlock a newer fix. Failed startup is never completion
+  success and does not alter existing findings or undo records.
+
+### Guided-fix command/thread completion boundary
+- A command outcome is not QThread completion. Ordinary success must not start the
+  next fix command until `finished`; failure must not restore controls or clear the
+  pending chain/password while its thread remains active.
+- Both notifications feed the same once-only guard. Duplicate/stale notifications
+  cannot dispatch twice or release another worker. Pre-dispatch startup rollback
+  remains immediate; no command, shutdown or HTTP execution semantics change.
