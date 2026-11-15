@@ -60,20 +60,20 @@ class AssessmentSequence(unittest.TestCase):
     def setUp(self):
         ManualWorker.created = []
         self.summary = Mock()
-        self.quick, self.temps = Mock(), Mock()
+        self.quick, self.temps = Mock(return_value={'outcome':'succeeded'}), Mock(return_value={'outcome':'succeeded'})
         self.sidebar = SimpleNamespace(terminal=Mock(), findings=Mock(), stack=Mock(),
                                        _workers=set(), _any_running=False,
                                        lynis_panel=SimpleNamespace(_any_running=False),
                                        isEnabled=Mock(return_value=True), setEnabled=Mock(),
                                        _pending_section_action=None, _post_scan_check=Mock(),
-                                       _scan_failed=Mock(), _parse_unused=Mock(), _parse_network=Mock())
+                                       _scan_failed=Mock(), _parse_unused=Mock(return_value='succeeded'), _parse_network=Mock(return_value='succeeded'))
         self.panel = SimpleNamespace(terminal=self.sidebar.terminal, findings=self.sidebar.findings,
                                      cve_table=Mock(), status=Mock(), _workers=set(), _any_running=False,
                                      isEnabled=Mock(return_value=True), setEnabled=Mock(),
                                      _get_installed_version=Mock(return_value='1'), HIGH_VALUE_PKGS=['example'],
                                      _cve_scan_serial=0, _cve_active_scan_id=0,
                                      _scan_cve_done_cb=None, _scan_upgrades_done_cb=None,
-                                     _scan_upgrades_failed_cb=None, _parse_upgrades=Mock())
+                                     _scan_upgrades_failed_cb=None, _parse_upgrades=Mock(return_value='succeeded'))
         self.sidebar.cve_panel = self.panel
         for name in ('run_everything', '_re_advance', '_re_step_done', '_re_finalize',
                      '_run_cmd', '_do_scan_unused', '_do_scan_network', '_do_scan_services'):
@@ -95,6 +95,7 @@ class AssessmentSequence(unittest.TestCase):
                              HttpWorker=ManualWorker, has_internet=lambda: True,
                              shutil=SimpleNamespace(which=lambda name: '/fake/'+name),
                              run_quick_checks=self.quick, run_temperature_check=self.temps,
+                             probe_package=lambda name: (True, '1') if name == 'example' else (False, None),
                              pkg_installed=lambda name: False, L=lambda key: key, SESSION=Mock())
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -104,6 +105,8 @@ class AssessmentSequence(unittest.TestCase):
         return self.sidebar._re_run
 
     def finish_command(self, worker, success=True):
+        if success and worker.args[0] in (['ss', '-tunlp'], ['apt', 'list', '--upgradable']):
+            worker.output_ready.emit('recognized fixture output')
         worker.outcome(success)
         worker.end()
 
@@ -184,7 +187,7 @@ class AssessmentSequence(unittest.TestCase):
 
     def test_synchronous_duplicate_callbacks_advance_once_without_recursion(self):
         def synchronous(on_terminal):
-            on_terminal('completed')
+            on_terminal('succeeded')
             on_terminal('failed')
         for name in ('_do_scan_unused', '_do_scan_network', '_do_scan_services'):
             setattr(self.sidebar, name, synchronous)
@@ -207,7 +210,7 @@ class AssessmentSequence(unittest.TestCase):
         self.finish_command(update, success=False)
         self.assertEqual(len(run['outcomes']), 7)
         self.assertEqual([r['outcome'] for r in run['outcomes']],
-                         ['skipped','failed','completed','failed','completed','skipped','failed'])
+                         ['skipped','failed','succeeded','failed','succeeded','skipped','failed'])
         self.sidebar._scan_failed.assert_called_once_with()
         self.sidebar._post_scan_check.assert_not_called()
         self.summary.assert_called_once_with()
@@ -230,7 +233,7 @@ class AssessmentSequence(unittest.TestCase):
                 ManualWorker.created = []
                 self.summary.reset_mock()
                 self.panel._get_installed_version.return_value = None
-                with patch.dict(NS, has_internet=lambda: online):
+                with patch.dict(NS, has_internet=lambda: online, probe_package=lambda name: (False, None)):
                     self.start()
                     self.finish_command(ManualWorker.created[0])
                     self.finish_command(ManualWorker.created[1])

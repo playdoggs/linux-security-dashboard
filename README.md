@@ -26,7 +26,10 @@ This tool assumes you don't — and that's fine.
 - **Tool Manager** — installs and explains security/monitoring tools like rkhunter, fail2ban, smartmontools
 - **Hardware health** — live CPU / GPU / drive temperatures via lm-sensors; SMART self-assessment via smartmontools (read-only, never runs destructive self-tests)
 - **Timeshift integration** — optional one-click snapshot before any destructive action; the action is aborted if the snapshot fails
-- **RUN EVERYTHING** — chains every non-sudo scan and opens a good / needs-fixing summary dialog
+- **RUN EVERYTHING** — runs seven non-sudo checks in sequence, then shows findings and
+  separate coverage states. Failed, partial, skipped, cancelled or unknown checks
+  prevent a complete assessment verdict; zero detected findings is not an all-clear.
+  Results describe the selected checks at scan time, not certification or continuous monitoring.
 - **Offline-aware** — detects no internet and advises you; CVE and tool install gracefully skip with a clear message
 - **Live progress in terminal** — every multi-item scan shows `[N/TOTAL] …` as it runs
 - **Risk Score** — 0 to 100, updates live as scans run

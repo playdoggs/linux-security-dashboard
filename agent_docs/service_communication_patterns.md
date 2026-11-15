@@ -45,7 +45,7 @@ Legacy JSONL is paged separately and cannot trigger dialogs or worker creation.
 step → run-local `on_terminal(outcome)` acknowledges it → next step. Workers
 acknowledge on `QThread.finished`, including CVE and update workers owned by
 CvePanel; logical success alone cannot advance. Synchronous helpers acknowledge
-return. Missing/offline checks acknowledge skipped execution. Cancellation of CVE
+an evidence-quality result, not just return. Missing/offline checks acknowledge skipped execution. Cancellation of CVE
 waits for its worker to finish before acknowledging cancellation.
 
 `_re_step_done(run_id,index,outcome)` accepts each waiting step once. Stale,
@@ -53,7 +53,10 @@ duplicate and finalized callbacks are ignored. `_re_finalize()` consumes the
 summary callback once after all seven outcomes. No timer chain is used. Repeated
 requests are refused; sidebar/CVE controls are disabled temporarily and CvePanel
 uses the run token to reject conflicting starts. Existing findings are preserved.
-Coverage semantics and general overlapping scans remain separate stages.
+Stage 4D records succeeded/partial/failed/skipped/cancelled/unknown alongside
+reasons and separate CVE-record counts. A finalized snapshot drives banner,
+summary and HTML verdicts; incomplete coverage cannot become clean after later
+success. Stage 4E retains responsibility for general overlapping scans.
 
 ## Progress reporting
 Multi-item scans emit `[N/TOTAL] item — status` on every iteration (CVE, risky services, quick checks, updates). Counter resets at scan start.

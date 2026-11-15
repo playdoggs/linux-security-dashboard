@@ -637,6 +637,96 @@ def pkg_installed(pkg):
         logging.error(f"pkg_installed({pkg}): {e}")
     return False
 
+ASSESSMENT_STEPS = ("Unused software", "Open network ports", "Risky services",
+                    "Quick security checks", "Hardware temperatures",
+                    "CVE vulnerabilities", "Available updates")
+COVERAGE_STATES = ("succeeded", "partial", "failed", "skipped", "cancelled", "unknown")
+
+
+def coverage_result(outcome, reason=""):
+    return {"outcome": outcome if outcome in COVERAGE_STATES else "unknown", "reason": reason}
+
+
+def assessment_complete(coverage):
+    if type(coverage) is not dict or coverage.get("active", True):
+        return False
+    rows = coverage.get("outcomes", [])
+    return (len(rows) == len(ASSESSMENT_STEPS)
+            and tuple(row.get("name") for row in rows) == ASSESSMENT_STEPS
+            and all(row.get("outcome") == "succeeded" for row in rows))
+
+
+def assessment_verdict(coverage, findings):
+    if type(coverage) is dict:
+        findings = findings or any(row.get("findings", 0) > 0 for row in coverage.get("outcomes", []))
+    complete = assessment_complete(coverage)
+    rows = coverage.get("outcomes", []) if type(coverage) is dict else []
+    known = any(row.get("outcome") in ("succeeded", "partial") for row in rows)
+    if complete:
+        return ("Complete assessment — findings need attention." if findings else
+                "Complete assessment — no findings detected within these seven checks.")
+    if not known:
+        return ("Assessment failed or coverage is unknown. "
+                + ("Detected findings still need attention." if findings else
+                   "No findings detected does not establish that the system is safe."))
+    return ("Incomplete assessment — findings need attention; additional issues may be undetected."
+            if findings else
+            "Incomplete assessment — no findings detected so far; this is not an all-clear.")
+
+
+def assessment_details(coverage):
+    rows = coverage.get("outcomes", []) if type(coverage) is dict else []
+    by_name = {row.get("name"): row for row in rows}
+    lines = []
+    if type(coverage) is not dict or coverage.get("active", True):
+        lines.append("Coverage is not confirmed/current; run all seven checks to assess it.")
+    for name in ASSESSMENT_STEPS:
+        row = by_name.get(name, {})
+        state = row.get("outcome", "unknown")
+        if state not in COVERAGE_STATES:
+            state = "unknown"
+        # Keep implementation exceptions in terminal diagnostics, not the verdict.
+        reason = row.get("reason") or ("See terminal diagnostics." if row.get("error") else "")
+        count = row.get("findings", 0)
+        if count:
+            reason += f" {count} CVE records returned."
+        lines.append(f"{name}: {state.capitalize()}" + (f" — {reason}" if reason else ""))
+    return "\n".join(lines)
+
+
+def probe_package(pkg):
+    """Scan-only tri-state probe; never change remediation's bool helper."""
+    if PKG_MGR == "apt":
+        cmd = ["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${Version}", pkg]
+    elif PKG_MGR == "dnf":
+        cmd = ["rpm", "-q", "--qf", "%{VERSION}-%{RELEASE}", pkg]
+    elif PKG_MGR == "pacman":
+        cmd = ["pacman", "-Q", pkg]
+    else:
+        return None, None
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            if PKG_MGR == "apt":
+                fields = r.stdout.split("\t", 1)
+                if len(fields) == 2 and re.fullmatch(r"[a-zA-Z? ][a-zA-Z? ][a-zA-Z? ]", fields[0]):
+                    if fields[0] == "ii " and fields[1].strip():
+                        return True, fields[1].strip()
+                    if fields[0][1] in ("n", "c"):
+                        return False, None
+            elif r.stdout.strip():
+                return True, r.stdout.strip().split()[-1]
+        message = (r.stdout + r.stderr).lower()
+        absent = ((PKG_MGR == "apt" and f"no packages found matching {pkg}" in message)
+                  or (PKG_MGR == "dnf" and f"package {pkg} is not installed" in message)
+                  or (PKG_MGR == "pacman" and f"package '{pkg}' was not found" in message))
+        if r.returncode == 1 and absent:
+            return False, None
+    except Exception:
+        pass
+    return None, None
+
+
 def check_update_age():
     """Check how many days since the system's package list was last updated.
     Returns (days, message) or (None, '') if we can't tell."""
@@ -2343,7 +2433,7 @@ class RiskScorePanel(QWidget):
 
         # Top row: section title + profile + update age
         top = QHBoxLayout()
-        lbl = QLabel(L("risk_label"))
+        lbl = QLabel("Detected findings severity")
         lbl.setObjectName("heading")
         top.addWidget(lbl)
         top.addStretch()
@@ -2385,7 +2475,7 @@ class RiskScorePanel(QWidget):
         s = RISK.score()
         label, colour = RISK.label()
         self.bar.setValue(s)
-        self.bar.setFormat(f"{s} / 100  —  {label}")
+        self.bar.setFormat(f"{s} / 100 — detected findings severity (not coverage)")
         self.bar.setStyleSheet(
             f"QProgressBar::chunk{{background:{colour};border-radius:5px;}}"
         )
@@ -2395,7 +2485,7 @@ class RiskScorePanel(QWidget):
         section_scan, section_checks, section_cve = self._section_scores()
         self.detail.setText(
             f"🔴 HIGH: {h}   🟡 MEDIUM: {m}   🟢 LOW: {l}"
-            f"   Running health score: {s}/100"
+            f"   Detected findings score: {s}/100"
             f"   Section scores — Scan: {section_scan}  Checks: {section_checks}  CVE: {section_cve}"
         )
         self.update_face(s)
@@ -2824,7 +2914,7 @@ class FindingsTable(QWidget, WorkerMixin):
 
         # "All looks well" banner — shown after a scan that found nothing bad
         self._ok_banner = QLabel(
-            "✔  Great! All looks well — nothing concerning found from this scan."
+            "✔ Assessment complete — no findings detected within the seven required checks."
         )
         self._ok_banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._apply_ok_banner_style()
@@ -3272,16 +3362,27 @@ class FindingsTable(QWidget, WorkerMixin):
         """Clear all findings and reset the risk score to zero."""
         self.table.setRowCount(0)
         self._seen_findings.clear()
+        prior = getattr(self, "_assessment_coverage", None)
+        if type(prior) is dict:
+            prior["active"] = True
+            prior["outcomes"] = []
         RISK.clear()
         self.score_changed.emit()
         self._ok_banner.setVisible(False)
 
+    def set_assessment_coverage(self, run):
+        self._assessment_coverage = {"id": run["id"], "active": run["active"],
+                                     "outcomes": [dict(row) for row in run["outcomes"]]}
+        self.show_all_ok_banner()
+
     def show_all_ok_banner(self):
-        """Show the green 'all looks well' banner if no HIGH/MEDIUM findings.
-        RISK.findings is a flat list of strings e.g. ["HIGH", "LOW", "MEDIUM"]."""
-        has_bad = "HIGH" in RISK.findings or "MEDIUM" in RISK.findings
-        if not has_bad:
-            self._ok_banner.setVisible(True)
+        """Findings severity alone can never establish assessment completeness."""
+        coverage = getattr(self, "_assessment_coverage", None)
+        complete = assessment_complete(coverage)
+        has_findings = (any(level in RISK.findings for level in ("HIGH", "MEDIUM", "LOW"))
+                        or (type(coverage) is dict and any(row.get("findings", 0)
+                                                          for row in coverage.get("outcomes", []))))
+        self._ok_banner.setVisible(complete and not has_findings)
 
     def hide_all_ok_banner(self):
         """Hide the all-ok banner — called when a bad finding is added."""
@@ -3387,7 +3488,7 @@ def detect_profile():
 
 
 # ── Quick security checks ─────────────────────────────────────────────────────
-def run_quick_checks(terminal, findings):
+def run_quick_checks(terminal, findings, with_coverage=False):
     """Run the 8 core security checks and report to both terminal and findings.
     Each check shows a clear pass/fail with an explanation if it fails."""
     terminal.append("\nQuick Security Checks\n" + "─" * 50, T["ACCENT"])
@@ -3454,11 +3555,48 @@ def run_quick_checks(terminal, findings):
 
     total = len(CHECKS)
     passed = 0
+    checked = 0
     for i, (desc, cmd, pass_fn, fix, why) in enumerate(CHECKS, start=1):
         prefix = f"[{i}/{total}]"
         try:
             r  = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-            ok = pass_fn(r.stdout + r.stderr)
+            output = r.stdout.strip()
+            recognizable = False
+            evidence = r.stdout
+            if cmd[0] == "grep":
+                # Compare explicit values only, not effective sshd configuration.
+                # Never cherry-pick a secure value from contradictory output.
+                values = set()
+                malformed = False
+                allowed = ({"yes", "no", "prohibit-password", "without-password", "forced-commands-only"}
+                           if cmd[2] == "PermitRootLogin" else {"yes", "no"})
+                for line in output.splitlines():
+                    if not line.strip() or line.lstrip().startswith("#"):
+                        continue
+                    match = re.fullmatch(r"\s*" + re.escape(cmd[2]) +
+                                         r"\s+(\S+)(?:\s+#.*)?\s*", line, re.I)
+                    if not match or match.group(1).lower() not in allowed:
+                        malformed = True
+                        continue
+                    values.add(match.group(1).lower())
+                recognizable = r.returncode == 0 and len(values) == 1 and not malformed
+                if recognizable:
+                    evidence = f"{cmd[2]} {next(iter(values))}"
+                elif len(values) > 1:
+                    terminal.append_warn(f"{prefix} {desc} — conflicting explicit values; result unknown")
+            elif cmd[0] == "systemctl":
+                recognizable = ((r.returncode == 0 and output == "active") or
+                                (r.returncode == 3 and output in ("inactive", "failed", "activating", "deactivating")))
+            elif cmd[0] == "dpkg":
+                recognizable = (r.returncode == 0 and bool(re.search(r"(?m)^[a-z?][a-z? ]{2}\s+unattended-upgrades\s", output)))
+            elif cmd[0] == "ls":
+                recognizable = r.returncode == 0 and bool(re.match(r"^[-][rwxstST-]{9}\s", output))
+            elif cmd[0] == "sysctl":
+                recognizable = r.returncode == 0 and bool(re.fullmatch(re.escape(cmd[1]) + r"\s*=\s*\d+", output))
+            if not recognizable:
+                terminal.append_warn(f"{prefix} {desc} — result could not be verified")
+                continue
+            ok = pass_fn(evidence)
             if ok:
                 # Pass — show in terminal AND add green INFO finding
                 terminal.append_ok(f"{prefix} {desc}")
@@ -3473,6 +3611,7 @@ def run_quick_checks(terminal, findings):
                 terminal.append(f"     Why: {why}", T["WARN"])
                 terminal.append(f"     Fix: {fix}", T["TEXT_DIM"])
                 findings.add_finding(desc, "HARDENING", "MEDIUM", why)
+            checked += 1
         except subprocess.TimeoutExpired:
             terminal.append_warn(f"{prefix} {desc} — check timed out")
         except FileNotFoundError:
@@ -3485,6 +3624,9 @@ def run_quick_checks(terminal, findings):
         f"\n{'─'*50}\n{passed}/{len(CHECKS)} checks passed", T["ACCENT"]
     )
     SESSION.log_scan("Quick Security Checks", len(CHECKS) - passed)
+    if with_coverage:
+        return coverage_result("succeeded" if checked == total else "partial" if checked else "failed",
+                               f"{checked}/{total} checks produced usable evidence; {passed} settings passed.")
     return passed
 
 
@@ -3503,7 +3645,7 @@ _SENSORS_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 
-def run_temperature_check(terminal, findings):
+def run_temperature_check(terminal, findings, with_coverage=False):
     """Run `sensors` and turn each temperature reading into a finding.
     Read-only, no sudo. If lm-sensors isn't installed, advise the user and
     return early — no attempt to auto-install."""
@@ -3518,18 +3660,32 @@ def run_temperature_check(terminal, findings):
             "apt-get install lm-sensors"
         )
         SESSION.log_scan("Hardware Temperature Check", 0)
-        return 0
+        return coverage_result("skipped", "lm-sensors is unavailable.") if with_coverage else 0
 
     try:
         r = subprocess.run(
-            ["sensors"], capture_output=True, text=True, timeout=10
+            ["sensors"], capture_output=True, text=True, timeout=10,
+            env={**os.environ, "LC_ALL": "C"}  # Stable diagnostic language for error classification.
         )
     except Exception as e:
         terminal.append_err(f"sensors failed: {e}")
-        return 0
+        return coverage_result("failed", "Temperature command failed.") if with_coverage else 0
+    # sensors can return zero while individual subfeatures failed. A harmless
+    # diagnostic warning alone is not evidence of failure; explicit errors are.
+    diagnostic_error = bool(re.search(
+        r"(?im)^\s*(?:error|fatal)\b|\b(?:cannot|can't|could\s+not|failed\s+to|unable\s+to)\s+"
+        r"(?:read|get|access|open|detect)\b|\b(?:read(?:ing)?\s+failed|failed\s+reading)\b|"
+        r"\b(?:i/o|input/output|read)\s+error\b|\bno\s+sensors\s+found\b",
+        r.stderr or ""))
+    command_error = r.returncode != 0
+    if command_error or diagnostic_error:
+        terminal.append_warn("Some temperature checks failed; usable readings are partial evidence.")
+    elif r.stderr.strip():
+        terminal.append_info("Temperature tool emitted diagnostics without an identified sensor failure.")
 
     lines = r.stdout.splitlines()
     readings = []
+    unparsed = 0
     for line in lines:
         # Skip adapter / header lines — they don't match the regex anyway but
         # this keeps the loop efficient.
@@ -3537,16 +3693,22 @@ def run_temperature_check(terminal, findings):
             continue
         m = _SENSORS_LINE_RE.search(line)
         if not m:
+            unparsed += 1
             continue
         try:
             cur = float(m.group("cur"))
         except (TypeError, ValueError):
+            unparsed += 1
             continue
         high = float(m.group("high")) if m.group("high") else None
         crit = float(m.group("crit")) if m.group("crit") else None
         readings.append((m.group("name").strip(), cur, high, crit))
 
     if not readings:
+        if command_error or diagnostic_error:
+            terminal.append_err("Temperature checks failed; no usable readings were returned.")
+            SESSION.log_scan("Hardware Temperature Check", 0)
+            return coverage_result("failed", "Temperature checks failed; no usable readings.") if with_coverage else 0
         terminal.append_warn(
             "sensors ran but produced no readings. "
             "You may need: sudo sensors-detect"
@@ -3556,7 +3718,7 @@ def run_temperature_check(terminal, findings):
             "Run `sudo sensors-detect` to register your hardware sensors."
         )
         SESSION.log_scan("Hardware Temperature Check", 0)
-        return 0
+        return coverage_result("unknown", "No usable temperature readings.") if with_coverage else 0
 
     total = len(readings)
     hot = 0
@@ -3599,6 +3761,11 @@ def run_temperature_check(terminal, findings):
         T["ACCENT"],
     )
     SESSION.log_scan("Hardware Temperature Check", hot)
+    if with_coverage:
+        incomplete = unparsed or command_error or diagnostic_error
+        return coverage_result("partial" if incomplete else "succeeded",
+                               f"{total} readings checked" + ("; sensor errors or unrecognized readings limit coverage."
+                                                            if incomplete else "."))
     return hot
 
 
@@ -4801,7 +4968,7 @@ class CvePanel(QWidget, WorkerMixin):
             self.status.setText(msg)
             self.terminal.append_warn(msg)
             if on_terminal:
-                on_terminal("skipped")
+                on_terminal(coverage_result("skipped", "Offline; CVE requests were not made."))
             if on_complete:
                 try:
                     on_complete()
@@ -4813,15 +4980,23 @@ class CvePanel(QWidget, WorkerMixin):
         self.terminal.append_cmd("# CVE check — querying Ubuntu security database")
 
         # Build list of (package, version) for packages that are actually installed
-        targets = [
-            (pkg, ver) for pkg in self.HIGH_VALUE_PKGS
-            if (ver := self._get_installed_version(pkg))
-        ]
+        targets = []
+        probe_unknown = 0
+        for pkg in self.HIGH_VALUE_PKGS:
+            if PKG_MGR != "apt":
+                probe_unknown += 1
+                continue  # This CVE provider's supported scope is Ubuntu/apt.
+            installed, version = probe_package(pkg)
+            if installed is None:
+                probe_unknown += 1
+            elif installed:
+                targets.append((pkg, version))
 
         if not targets:
             self.status.setText("No packages found to check on this system.")
             if on_terminal:
-                on_terminal("skipped")
+                on_terminal(coverage_result("unknown" if probe_unknown else "skipped",
+                                             "Package discovery was incomplete." if probe_unknown else "No supported installed targets."))
             elif on_complete:
                 self._scan_cve_done_cb = None
                 on_complete()
@@ -4833,6 +5008,8 @@ class CvePanel(QWidget, WorkerMixin):
         self._cve_network = 0
         self._cve_error = 0
         self._cve_done = 0
+        self._cve_limited = 0
+        self._cve_findings = 0
 
         self.status.setText(
             f"Querying CVE database for {len(targets)} packages — please wait..."
@@ -4866,11 +5043,14 @@ class CvePanel(QWidget, WorkerMixin):
                     outcome = "cancelled"
                 elif not state["finished"] or state["parse_failed"]:
                     outcome = "unknown"
-                elif self._cve_ok == self._cve_total:
+                elif self._cve_ok == self._cve_total and not probe_unknown and not self._cve_limited:
                     outcome = "succeeded"
                 else:
                     outcome = "partial" if self._cve_ok else "failed"
-                return outcome
+                return {**coverage_result(outcome,
+                    f"{self._cve_ok}/{self._cve_total} responses usable; "
+                    f"{probe_unknown} package probes unknown; {self._cve_limited} responses limited."),
+                    "findings": self._cve_findings}
         # Fallible bookkeeping must finish before any HTTP worker starts.
         SESSION.log_scan("CVE Vulnerability Check", 0)
         if on_terminal:
@@ -4903,9 +5083,20 @@ class CvePanel(QWidget, WorkerMixin):
                 self.terminal.append_info(f"{prefix} — could not check (request failed)")
             return
 
+        if (type(cve_data) is not dict or type(cve_data.get("cves")) is not list
+                or any(type(c) is not dict or not isinstance(c.get("cvss_severity"), str)
+                       or c["cvss_severity"].lower() not in ("critical", "high", "medium", "low", "negligible")
+                       for c in cve_data["cves"])):
+            self._cve_error += 1
+            self.terminal.append_warn(f"{prefix} — unrecognized CVE response; coverage unknown")
+            return
+        cves = cve_data["cves"]
+        count = len(cves)
+        self._cve_findings += count
+        # The request uses limit=5; a full page cannot establish exhaustive results.
+        if count >= 5:
+            self._cve_limited += 1
         self._cve_ok += 1
-        cves    = cve_data.get("cves", [])
-        count   = len(cves)
         highest = "none"
 
         # Find the highest severity level across all CVEs for this package
@@ -4950,7 +5141,7 @@ class CvePanel(QWidget, WorkerMixin):
                 f"{prefix} ({version}) — {count} CVEs, highest: {highest.upper()}"
             )
         else:
-            summary = "no known CVEs" if count == 0 else f"{count} CVEs, highest: {highest.upper()}"
+            summary = "no CVEs returned by this lookup" if count == 0 else f"{count} CVEs, highest: {highest.upper()}"
             self.terminal.append_info(f"{prefix} ({version}) — {summary}")
 
     def _finish_cve_scan(self, scan_id):
@@ -4960,7 +5151,7 @@ class CvePanel(QWidget, WorkerMixin):
         total = max(1, self._cve_total)
         failed = self._cve_total - self._cve_ok
         self.status.setText(
-            f"CVE check complete — {self._cve_ok}/{self._cve_total} packages checked successfully."
+            f"CVE requests ended — {self._cve_ok}/{self._cve_total} usable responses; coverage is reported separately."
         )
         if failed > 0:
             self.terminal.append_info(
@@ -5000,7 +5191,8 @@ class CvePanel(QWidget, WorkerMixin):
         # `apt list --upgradable` reads the local cache, so it runs offline —
         # but the cache only reflects what the last `apt update` pulled. Warn
         # so users know their result may be stale.
-        if not has_internet():
+        cached_only = not has_internet()
+        if cached_only:
             warn = ("⚠  No internet detected — showing cached results only. "
                     "Run 'sudo apt update' online for the latest.")
             self.status.setText(warn)
@@ -5013,22 +5205,31 @@ class CvePanel(QWidget, WorkerMixin):
             ["apt", "list", "--upgradable"],
             env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
         )
-        outcome = {"value": "unknown", "parse_failed": False}
+        outcome = {"value": "unknown", "parse_failed": False, "coverage": "unknown"}
         def parse(text):
             try:
-                self._parse_upgrades(text)
+                quality = self._parse_upgrades(text)
+                if quality is not None:
+                    outcome["coverage"] = quality
             except Exception as exc:
                 outcome["parse_failed"] = True
                 self.terminal.append_err(f"Update output could not be processed: {exc}")
         w.output_ready.connect(parse if on_terminal else self._parse_upgrades)
         w.error_ready.connect(self.terminal.append_err)
-        w.finished_ok.connect(lambda: self.status.setText("Update check complete."))
+        w.finished_ok.connect(lambda: self.status.setText(
+            "Update command finished; see assessment coverage." if on_terminal else "Update check complete."))
         w.failed.connect(lambda: self.status.setText("Update check failed — see terminal output."))
         if on_terminal:
             w.finished_ok.connect(lambda: outcome.update(value="succeeded"))
             w.failed.connect(lambda: outcome.update(value="failed"))
-            self._start_assessment_worker(w, lambda:
-                "failed" if outcome["parse_failed"] else outcome["value"], on_terminal)
+            def terminal():
+                quality = ("failed" if outcome["parse_failed"] else outcome["coverage"]
+                           if outcome["value"] == "succeeded" else outcome["value"])
+                if cached_only and quality == "succeeded":
+                    quality = "partial"
+                return coverage_result(quality, "Cached package lists; freshness unverified." if cached_only else
+                                       "Package list output verified." if quality == "succeeded" else "Update evidence incomplete.")
+            self._start_assessment_worker(w, terminal, on_terminal)
         else:
             w.finished_ok.connect(self._finish_upgrades_scan)
             w.failed.connect(lambda: self._finish_upgrades_scan(succeeded=False))
@@ -5056,26 +5257,28 @@ class CvePanel(QWidget, WorkerMixin):
         # Skip apt's stderr warning chunk and anything that isn't the real
         # `apt list --upgradable` output. The real output always starts with
         # 'Listing' (header) or contains at least one 'pkg/release ...' line.
-        if not stripped or "Listing" not in text and "/" not in text:
-            return
         if stripped.upper().startswith("WARNING"):
-            return
+            return None  # Expected apt stderr warning is not package-list evidence.
+        if not stripped or ("Listing" not in text and "/" not in text):
+            return "unknown"
 
         lines = [
             l for l in text.splitlines()
-            if "/" in l and not l.startswith("Listing")
+            if l.strip() and not l.startswith("Listing")
         ]
         total = len(lines)
         if total == 0:
-            self.terminal.append_ok("No updates available — you're up to date.")
+            self.terminal.append_info("No updates listed in the local package cache; freshness is not guaranteed.")
             SESSION.log_scan("Check for Updates", 0)
-            return
+            return "succeeded" if stripped.startswith("Listing") else "unknown"
 
         self.terminal.append_info(f"{total} packages have updates available.")
         shown = min(total, 30)
+        invalid = 0
         for i, line in enumerate(lines[:shown], start=1):
             pkg = line.split("/")[0].strip()
-            if not valid_pkg(pkg):
+            if "/" not in line or not valid_pkg(pkg) or len(line.split()) < 3:
+                invalid += 1
                 continue
             # Pull the new version (second whitespace-separated token) to make
             # the progress line useful — users can see what's changing.
@@ -5090,6 +5293,7 @@ class CvePanel(QWidget, WorkerMixin):
         if total > shown:
             self.terminal.append_info(f"...and {total - shown} more (showing first {shown})")
         SESSION.log_scan("Check for Updates", total)
+        return "unknown" if invalid == shown else "partial" if invalid or total > shown else "succeeded"
 
 
 # ── Recommended tools panel ───────────────────────────────────────────────────
@@ -6327,6 +6531,9 @@ class SideBar(QWidget, WorkerMixin):
         # don't leak into the terminal during a different scan (e.g. Lynis).
         if hasattr(self, "cve_panel"):
             self.cve_panel.cancel_active_scan()
+        prior = getattr(self.findings, "_assessment_coverage", None)
+        if type(prior) is dict:
+            prior["active"] = True  # Replaced evidence is not a complete seven-step assessment.
         self.findings.clear_findings()
         self.terminal.output.clear()
         self.terminal.append(
@@ -6342,24 +6549,33 @@ class SideBar(QWidget, WorkerMixin):
         if show_output:
             w.output_ready.connect(lambda t: self.terminal.append(t))
         w.error_ready.connect(self.terminal.append_err)
-        outcome = {"value": "unknown", "parse_failed": False}
+        outcome = {"value": "unknown", "parse_failed": False,
+                   "coverage": "succeeded" if cmd == ["deborphan"] else "unknown"}
         if on_output:
             if on_terminal:
                 def parse(text):
                     try:
-                        on_output(text)
+                        quality = on_output(text)
+                        if quality is not None:
+                            outcome["coverage"] = quality
                     except Exception as exc:
                         outcome["parse_failed"] = True
                         self.terminal.append_err(f"{label} parsing failed: {exc}")
                 w.output_ready.connect(parse)
             else:
                 w.output_ready.connect(on_output)
-        w.finished_ok.connect(lambda: self.terminal.append_ok(f"{label} complete."))
+        if on_terminal:
+            w.finished_ok.connect(lambda: self.terminal.append_info(f"{label}: command finished; checking coverage."))
+        else:
+            w.finished_ok.connect(lambda: self.terminal.append_ok(f"{label} complete."))
         if on_terminal:
             w.finished_ok.connect(lambda: outcome.update(value="succeeded"))
             w.failed.connect(lambda: outcome.update(value="failed"))
-            self._start_assessment_worker(w, lambda:
-                "failed" if outcome["parse_failed"] else outcome["value"], on_terminal)
+            self._start_assessment_worker(w, lambda: coverage_result(
+                "failed" if outcome["parse_failed"] else outcome["coverage"]
+                if outcome["value"] == "succeeded" else outcome["value"],
+                "Command output recognized." if outcome["value"] == "succeeded" and outcome["coverage"] == "succeeded"
+                else "Command failed or evidence could not be fully interpreted."), on_terminal)
         else:
             w.finished_ok.connect(self._post_scan_check)
             w.failed.connect(self._scan_failed)
@@ -6372,7 +6588,7 @@ class SideBar(QWidget, WorkerMixin):
         self.terminal.append_warn("Scan failed — results may be incomplete.")
 
     def _post_scan_check(self):
-        """After any scan completes, show the all-ok banner if nothing bad was found."""
+        """Mark execution bookkeeping; the banner independently requires full coverage."""
         if self._pending_section_action:
             sec, act = self._pending_section_action
             self._mark_section_action_done(sec, act)
@@ -6390,7 +6606,7 @@ class SideBar(QWidget, WorkerMixin):
                 "deborphan is not installed. Install with: sudo apt install deborphan"
             )
             if on_terminal:
-                on_terminal("skipped")
+                on_terminal(coverage_result("skipped", "deborphan is unavailable."))
             return
         self._run_cmd(["deborphan"], "Unused software scan", self._parse_unused,
                       on_terminal=on_terminal)
@@ -6398,9 +6614,13 @@ class SideBar(QWidget, WorkerMixin):
     def _parse_unused(self, text):
         """Parse deborphan output — every result is a leftover package."""
         count = 0
+        invalid = 0
         for line in text.strip().splitlines():
             pkg = line.strip()
-            if not pkg or not valid_pkg(pkg):
+            if not pkg:
+                continue
+            if not valid_pkg(pkg):
+                invalid += 1
                 continue
             # A small list of known dangerous packages to elevate to HIGH
             is_dangerous = pkg in ("telnet", "ftp", "rsh-server", "rsh-client")
@@ -6417,12 +6637,13 @@ class SideBar(QWidget, WorkerMixin):
             )
             count += 1
 
-        if count == 0:
+        if count == 0 and not invalid:
             self.findings.add_finding(
                 "No unused software found", "LEFTOVER", "INFO",
                 "✔ No leftover packages detected — good."
             )
         SESSION.log_scan(L("btn_unused"), count)
+        return "partial" if invalid and count else "unknown" if invalid else "succeeded"
 
     # ── Scan: open ports ──────────────────────────────────────────────────
     def _scan_network(self):
@@ -6445,11 +6666,18 @@ class SideBar(QWidget, WorkerMixin):
         }
         seen = set()
         count = 0
+        invalid = 0
+        header = False
         for line in text.strip().splitlines():
+            if line.startswith("Netid") and "State" in line:
+                header = True
+                continue
             if "LISTEN" not in line and "UNCONN" not in line:
+                invalid += bool(line.strip())
                 continue
             m = re.search(r":(\d+)\s+\S+:\*", line)
             if not m:
+                invalid += 1
                 continue
             port = m.group(1)
             if port in seen:
@@ -6473,7 +6701,7 @@ class SideBar(QWidget, WorkerMixin):
                     f"needs to be accessible from the network"
                 )
 
-        if count == 0:
+        if count == 0 and header and not invalid:
             self.findings.add_finding(
                 "No open ports detected", "NETWORK", "INFO",
                 "✔ No listening ports found."
@@ -6485,6 +6713,8 @@ class SideBar(QWidget, WorkerMixin):
                self.findings.table.item(r,2) and
                "INFO" not in self.findings.table.item(r,2).text()
         ]))
+
+        return "partial" if invalid and count else "unknown" if invalid or not header else "succeeded"
 
     # ── Scan: risky services ──────────────────────────────────────────────
     def _scan_services(self):
@@ -6505,10 +6735,16 @@ class SideBar(QWidget, WorkerMixin):
         self.terminal.append_cmd("# Checking for risky services...")
         total = len(RISKY_SVCS)
         found = 0
+        checked = 0
         for i, item in enumerate(RISKY_SVCS, start=1):
             name = item[0]
             prefix = f"[{i}/{total}] {name}"
-            if pkg_installed(name):
+            installed, _ = probe_package(name)
+            if installed is None:
+                self.terminal.append_warn(f"{prefix} — package status unknown")
+                continue
+            checked += 1
+            if installed:
                 self.findings.add_finding(*item)
                 self.terminal.append_warn(f"{prefix} — FOUND: {item[3]}")
                 found += 1
@@ -6522,7 +6758,8 @@ class SideBar(QWidget, WorkerMixin):
 
         SESSION.log_scan(L("btn_services"), found)
         if on_terminal:
-            on_terminal("completed")
+            on_terminal(coverage_result("succeeded" if checked == total else "partial" if checked else "unknown",
+                                        f"{checked}/{total} package checks verified."))
         else:
             self._post_scan_check()
 
@@ -6639,8 +6876,7 @@ class SideBar(QWidget, WorkerMixin):
             return
         run_id = str(uuid.uuid4())
         def synchronous(function, done):
-            function(self.terminal, self.findings)
-            done("completed")  # Returned normally; full coverage semantics are Stage 4D.
+            done(function(self.terminal, self.findings, with_coverage=True))
         steps = [
             ("Unused software", self._do_scan_unused),
             ("Open network ports", self._do_scan_network),
@@ -6662,6 +6898,7 @@ class SideBar(QWidget, WorkerMixin):
         # scan controls only for the lifetime of this orchestration.
         self.setEnabled(False)
         self.cve_panel.setEnabled(False)
+        self.findings.set_assessment_coverage(self._re_run)
         self.findings.hide_all_ok_banner()
         self._pending_section_action = ("scan", "fullscan")
         self.stack.setCurrentIndex(0)
@@ -6673,13 +6910,16 @@ class SideBar(QWidget, WorkerMixin):
         if (not run or run["id"] != run_id or not run["active"]
                 or run["waiting"] != index):
             return  # Duplicate, cancelled/finalized or stale run callback.
-        error = None
+        error, reason, findings = None, "", 0
         if type(outcome) is dict:
+            findings = outcome.get("findings", 0)
+            findings = findings if type(findings) is int and findings >= 0 else 0
             error = outcome.get("error")
+            reason = outcome.get("reason", "")
             outcome = outcome.get("outcome")
-        if outcome not in ("succeeded", "completed", "failed", "partial", "skipped", "cancelled", "unknown"):
+        if outcome not in COVERAGE_STATES:
             outcome = "unknown"
-        record = {"name": run["steps"][index][0], "outcome": outcome}
+        record = {"name": run["steps"][index][0], "outcome": outcome, "reason": reason, "findings": findings}
         if error is not None:
             record["error"] = error
         run["outcomes"].append(record)
@@ -6728,12 +6968,13 @@ class SideBar(QWidget, WorkerMixin):
             return
         run["finalized"] = True
         run["active"] = False  # Before callbacks/dialogs can enter another event loop.
+        self.findings.set_assessment_coverage(run)
         callback, run["on_complete"] = run["on_complete"], None
         self.cve_panel._assessment_owner = None
         self.setEnabled(run["sidebar_enabled"])
         self.cve_panel.setEnabled(run["panel_enabled"])
         self.terminal.append_info("RUN EVERYTHING finished — all seven steps reached an outcome.")
-        if all(item["outcome"] in ("succeeded", "completed") for item in run["outcomes"]):
+        if all(item["outcome"] == "succeeded" for item in run["outcomes"]):
             self._post_scan_check()
         else:
             self._scan_failed()
@@ -7125,6 +7366,7 @@ class RunEverythingSummaryDialog(QDialog):
         self.resize(780, 620)
         self.findings_widget = findings_widget
         self.profile_key = profile_key
+        self.coverage = getattr(findings_widget, "_assessment_coverage", None)
 
         layout = QVBoxLayout(self)
 
@@ -7142,7 +7384,7 @@ class RunEverythingSummaryDialog(QDialog):
 
         # Score + plain-English headline
         score = RISK.score()
-        label, _ = RISK.label()
+        label = "Detected findings only; assessment coverage is shown below."
         score_colour = (
             T["OK"]     if score < 20 else
             T["WARN"]   if score < 50 else
@@ -7172,6 +7414,10 @@ class RunEverythingSummaryDialog(QDialog):
             f"margin-top:6px;"
         )
         layout.addWidget(verdict)
+        coverage_text = QLabel(assessment_details(self.coverage))
+        coverage_text.setWordWrap(True)
+        layout.addWidget(coverage_text)
+        layout.addWidget(QLabel("Scope: seven selected checks at scan time; rerun after changes. Not a complete security audit or certification."))
 
         # Build the two buckets from the findings table
         good_items, bad_items = self._split_findings()
@@ -7179,10 +7425,10 @@ class RunEverythingSummaryDialog(QDialog):
         # Two-column breakdown
         cols = QHBoxLayout()
         cols.addLayout(self._bucket_column(
-            "✔ What's good",
+            "Observations / informational results",
             T["OK"],
             good_items,
-            "Everything below looks healthy.",
+            "Observations are not proof of full security coverage.",
             "Nothing obvious passed cleanly yet — run scans first.",
         ))
         cols.addLayout(self._bucket_column(
@@ -7190,7 +7436,7 @@ class RunEverythingSummaryDialog(QDialog):
             T["DANGER"],
             bad_items,
             "These items need attention. Higher-risk items are at the top.",
-            "Nothing flagged — good news.",
+            "No findings detected; check assessment coverage above.",
         ))
         layout.addLayout(cols)
 
@@ -7237,23 +7483,7 @@ class RunEverythingSummaryDialog(QDialog):
     # Verdict text mirrors the paragraph in the HTML report so the two feel
     # consistent. Kept short because this is an at-a-glance view.
     def _verdict_text(self, score, high, medium, low):
-        if score < 20:
-            headline = "Your system is in great shape."
-        elif score < 50:
-            headline = "Your system is mostly healthy — a few items to look at."
-        elif score < 75:
-            headline = "Your system has real security concerns — address soon."
-        else:
-            headline = "Your system has serious security issues — act today."
-        bits = []
-        if high:
-            bits.append(f"{high} high-priority")
-        if medium:
-            bits.append(f"{medium} medium")
-        if low:
-            bits.append(f"{low} low-priority")
-        counts = ", ".join(bits) if bits else "no outstanding findings"
-        return f"{headline}   ({counts})"
+        return assessment_verdict(getattr(self, "coverage", None), high + medium + low)
 
     def _split_findings(self):
         """Walk the findings table and split into good vs needs-fixing."""
@@ -7369,94 +7599,13 @@ def _collect_findings_by_section(findings_widget):
     return sections
 
 
-def _build_exec_statement(score, high, medium, low, actions_taken):
-    """Return a plain-English paragraph summarising the overall assessment.
-    Used at the top of the report so a non-technical reader gets the gist."""
-    if score < 20:
-        headline = "Your system is in great shape."
-        tone     = "Keep doing what you're doing — the fundamentals are in place."
-    elif score < 50:
-        headline = "Your system is mostly healthy, with a few items worth addressing."
-        tone     = "Most of what's flagged below is low-effort to resolve."
-    elif score < 75:
-        headline = "Your system has real security concerns that should be addressed soon."
-        tone     = "Focus on the high-priority items first — they open the biggest doors."
-    else:
-        headline = "Your system has serious security issues that need urgent attention."
-        tone     = "Start with the high-priority findings today — don't put this off."
-
-    detail_bits = []
-    if high:
-        detail_bits.append(
-            f"<b style='color:#ff4444;'>{high} high-priority</b> item"
-            + ("s" if high != 1 else "")
-            + " (address first)"
-        )
-    if medium:
-        detail_bits.append(
-            f"<b style='color:#f0a500;'>{medium} medium</b> item"
-            + ("s" if medium != 1 else "")
-        )
-    if low:
-        detail_bits.append(
-            f"<b style='color:#3fb950;'>{low} low-priority</b> item"
-            + ("s" if low != 1 else "")
-        )
-    breakdown = ", ".join(detail_bits) if detail_bits else "no outstanding findings"
-    action_note = (
-        f"You have taken <b>{actions_taken}</b> remediation action"
-        + ("s" if actions_taken != 1 else "")
-        + " this session."
-        if actions_taken
-        else "No remediation actions have been taken yet — running the fixes "
-             "in the sections below will improve this score."
-    )
-    return (
-        f"<p style='font-size:16px;margin:0 0 8px 0;'><b>{headline}</b></p>"
-        f"<p style='margin:0 0 8px 0;'>{tone}</p>"
-        f"<p style='margin:0 0 8px 0;'>This audit found {breakdown}.</p>"
-        f"<p style='margin:0;'>{action_note}</p>"
-    )
-
-
-def _render_finding_rows(rows):
-    """Render a list of finding dicts as HTML table rows. Empty list returns
-    an explicit 'nothing found' row so the section never looks broken."""
-    if not rows:
-        return (
-            "<tr><td colspan=5 style='color:#3fb950;text-align:center;'>"
-            "✔ Nothing flagged in this section — good."
-            "</td></tr>"
-        )
-    # Sort HIGH → MEDIUM → LOW → INFO so the most urgent stuff is at the top.
-    priority = {"HIGH": 0, "MEDIUM": 1, "LOW": 2, "INFO": 3}
-    def _rank(r):
-        for k, v in priority.items():
-            if k in r["risk"].upper():
-                return v
-        return 4
-    rows = sorted(rows, key=_rank)
-
-    out = []
-    for r in rows:
-        risk_upper = r["risk"].upper()
-        rc = (
-            "#ff4444" if "HIGH" in risk_upper else
-            "#f0a500" if "MEDIUM" in risk_upper else
-            "#3fb950" if "LOW" in risk_upper else
-            "#8b949e"
-        )
-        out.append(
-            f"<tr>"
-            f"<td>{html.escape(r['name'])}</td>"
-            f"<td>{html.escape(r['ftype'])}</td>"
-            f"<td style='color:{rc};font-weight:bold'>{html.escape(r['risk'])}</td>"
-            f"<td>{html.escape(r['tag'])}</td>"
-            f"<td>{html.escape(r['detail'])}</td>"
-            f"</tr>"
-        )
-    return "\n".join(out)
-
+def _build_exec_statement(score, high, medium, low, actions_taken, coverage=None):
+    verdict = html.escape(assessment_verdict(coverage, high + medium + low))
+    details = html.escape(assessment_details(coverage)).replace("\n", "<br>")
+    return (f"<p><b>{verdict}</b></p><p>{details}</p>"
+            "<p>Scope: seven selected checks at scan time; rerun after changes. Not a complete security audit or certification.</p>"
+            f"<p>Detected findings: {high} high, {medium} medium, {low} low. "
+            f"Remediation actions recorded this session: {actions_taken}.</p>")
 
 def generate_report(findings_widget, profile_key, mode="executive"):
     """Generate a complete HTML security report.
@@ -7466,7 +7615,7 @@ def generate_report(findings_widget, profile_key, mode="executive"):
     Executive mode leads with a plain-English assessment; Technical mode
     keeps the same structure but tones down the preamble."""
     score = RISK.score()
-    label, _ = RISK.label()
+    label = "Detected findings severity; not assessment coverage"
     profile_label = PROFILES.get(profile_key, {}).get("label", "Unknown")
     sysinfo = get_system_info()
     hostname = sysinfo["hostname"]
@@ -7479,15 +7628,8 @@ def generate_report(findings_widget, profile_key, mode="executive"):
     sections = _collect_findings_by_section(findings_widget)
     actions_taken = len(UNDO_LOG)
 
-    if mode == "executive":
-        exec_block = _build_exec_statement(score, high, medium, low, actions_taken)
-    else:
-        exec_block = (
-            "<p style='color:#8b949e;margin:0;'>"
-            "Technical report — full detail for every finding is listed below, "
-            "grouped by the sidebar section that produced it."
-            "</p>"
-        )
+    exec_block = _build_exec_statement(score, high, medium, low, actions_taken,
+                                       getattr(findings_widget, "_assessment_coverage", None))
 
     # Recommended-tools summary — count installed vs not so the report tells
     # the reader what extra defensive tooling they have (and don't have).

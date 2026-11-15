@@ -5,6 +5,18 @@ All notable changes to Linux Security Dashboard are documented here.
 ## [Unreleased] — v4.2.1
 
 ### Changed
+- Increment 4 Stage 4D: separate six-state evidence coverage from findings severity.
+  Require all seven checks to succeed before a complete verdict; missing, partial,
+  failed or unknown checks suppress all-clear reporting. Show per-step coverage in
+  the summary and both HTML report modes. Scan-only package probes, quick checks,
+  temperatures and parsers now distinguish verified evidence from missing or
+  unrecognized results. Preserve findings, sequencing and remediation; risk-score
+  calculations and severity thresholds remain unchanged. Neutral findings labels
+  replace score-only health claims. General panel overlap remains Stage 4E.
+  Acceptance corrections reject contradictory SSH values instead of selecting a
+  secure match. Temperature evidence now includes stderr and return status while
+  retaining usable readings/findings; mixed failures are partial, not successful.
+  Harmless diagnostics remain non-fatal; sensors uses child-only LC_ALL=C.
 - Increment 4 Stage 4C: replace RUN EVERYTHING timer polling with seven explicit
   completion-driven steps. UUID run/step guards reject duplicate and stale
   callbacks; CVE/update worker thread completion gates progression. Record terminal

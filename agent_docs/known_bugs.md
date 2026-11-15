@@ -19,20 +19,28 @@ Audit date: **2026-04-23**
   `full_output` after any failure is diagnostic material, not complete evidence.
 
 
-### Assessment coverage and general overlap (Stages 4D/4E)
-- Stage 4C records seven run-scoped terminal outcomes, but synchronous helper
-  `completed` means returned normally; helpers may still swallow probe failures.
-  The existing score/summary does not comprehensively represent missing coverage.
-- RUN EVERYTHING preserves main findings; previous observations are not proof of
-  current state. CVE and updates retain the shared detail-table convention.
-- Only minimum run-owned scan controls are locked. General stale/overlapping panel
-  results and comprehensive assessment verdicts remain later-stage work.
-- The orchestrator waits for actual worker completion; it does not add a watchdog
-  that could falsely claim a still-running HTTP or command worker is finished.
+### Assessment scope and general overlap (Stage 4E)
+- Stage 4D reports evidence coverage independently of findings. Coverage describes
+  the selected checks at scan time, not ongoing system state or certification.
+- CVE requests cover selected apt packages with at most five returned records per
+  package; full pages are partial. Version/release applicability and broader
+  provider/distribution support are not established by this increment.
+- RUN EVERYTHING preserves earlier main findings. They remain observations, not
+  proof of current state. CVE/updates still share a detail table. General stale
+  callbacks/overlapping panel scans remain Stage 4E.
+- Quick SSH checks inspect explicit directives in the selected file, not the full
+  effective sshd configuration including all defaults/includes. Missing explicit
+  directives are unverified, rather than successful coverage.
+- Unknown package probes, unsupported/unrecognized command output, missing sensors
+  and offline CVE checks never establish successful assessment coverage.
 
 ## Regression guards (previously fixed — don't regress)
 
 ### Quick-check parsing
+- SSH explicit values must be unambiguous; a matching secure line cannot override
+  a conflicting insecure one. Identical duplicates are allowed; malformed/unknown
+  values do not establish coverage or generate a pass. This is not effective sshd
+  configuration analysis and does not evaluate all Include/Match semantics.
 - SSH checks use anchored regex: `^\s*PermitRootLogin\s+(no|prohibit-password)\b` and `^\s*PasswordAuthentication\s+no\b`.
 - UFW / fail2ban use exact equality: `o.strip() == "active"`.
 - **Never** reintroduce substring matching (`"active" in o.lower()`, `"no" in o.lower()`).
@@ -103,3 +111,25 @@ Audit date: **2026-04-23**
   step record. Duplicate/late callbacks cannot consume that step again.
 - Regression coverage: `tests/test_assessment_sequence.py` uses production scan
   adapters and controlled signals without launching GUI/commands/network calls.
+
+### Coverage and honest verdicts (Increment 4 Stage 4D)
+- Require all seven named steps to succeed; partial/failed/skipped/cancelled/unknown
+  must suppress the healthy banner and complete verdicts. Function/thread return
+  alone is insufficient. Later successes cannot erase earlier coverage failures.
+- Preserve findings when another check fails. Insecure settings can be successfully
+  checked; unknown settings cannot pass. Do not encode coverage failures as risk.
+- Keep risk mathematics and remediation helpers independent. No compliance claim.
+- Keep summary and both report modes aligned; INFO rows are observations, not proof
+  of health. Clearing/replacing findings invalidates the coverage snapshot.
+- Regression coverage: `tests/test_assessment_coverage.py` plus sequencing tests.
+
+### Temperature diagnostic evidence
+- Zero exit does not override explicit sensor errors. Combine stdout, stderr and
+  return status: usable readings plus errors are Partial; errors without readings
+  are Failed. Preserve genuine hot readings/findings on nonzero or partial output.
+- Explicit read-failure wording includes read/reading failed, failed reading,
+  cannot read, failed to read, unable to read and read error, regardless of case
+  and ordinary whitespace. Do not match "failed" or "warning" alone.
+- Harmless warnings are not automatically failures. LC_ALL=C applies to the sensors
+  child only. Recognition covers explicit error/fatal markers and sensor access/read
+  failures; it is not exhaustive sensor enumeration or proof of healthy hardware.

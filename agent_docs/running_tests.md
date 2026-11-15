@@ -153,3 +153,41 @@ after an adapter's dispatch call, outcome-calculation failure and duplicate/late
 notifications. Four focused regressions failed against the rejected implementation
 before the correction. Controlled worker signals execute no commands or network
 requests; they model callback ordering rather than launching the full GUI.
+
+## Increment 4 Stage 4D coverage and verdicts
+
+`tests/test_assessment_coverage.py` tests production coverage helpers, banner and
+summary/report methods, quick/temperature checks, package probes and parser paths.
+All subprocess and widget interactions are mocked. Cases include complete runs
+with/without findings, every incomplete state, partial/offline/full-page CVEs,
+unknown package probes, missing sensors, quick-check exceptions, malformed output,
+preserved findings and late successful completion after failure. Both HTML modes
+must keep incomplete coverage visible and escape explanatory text.
+
+Sequencing fixtures now return explicit evidence quality rather than `completed`;
+all prior UUID, dispatch-exception, ordering and exactly-once protections remain
+tested. RiskTracker/remediation package checks are unchanged. No GUI, host commands
+or network requests are used by the new coverage tests.
+
+### Stage 4D evidence-validation acceptance corrections
+
+Two focused production-method regression tests reproduce the rejected SSH and
+sensor cases. Against the rejected code, conflicting/malformed directives and
+sensor diagnostic/nonzero-exit cases produced 13 failing subtests. Corrected tests
+cover both SSH directives: secure/insecure, contradictory values in either order,
+identical duplicates, comments, missing/malformed values and no passed message or
+complete coverage for ambiguous evidence. They do not execute sshd or change files.
+
+Sensor fixtures cover empty stderr, explicit failures with/without valid readings,
+harmless warnings, warning-prefixed read failures, nonzero exit with usable readings,
+and retention of hot findings. Tests verify incomplete sensor evidence cannot make
+all-seven coverage complete and verify child-only LC_ALL=C. All subprocesses are
+mocked; no sensors detection/configuration or privileged commands are executed.
+
+The follow-up temperature-wording regression covers read failed, reading failed,
+failed reading, cannot read, failed to read, unable to read and read error, including
+capitalization/tabs and sensor identifiers. The previous classifier failed 18 of
+these subtests. Each failure phrase is checked with normal, hot and absent readings;
+coverage, findings retention, banner and HTML verdicts are exercised through
+production methods. Separate cases ensure harmless warnings and unrelated uses of
+"failed" remain non-fatal. No command is actually executed by these cases.

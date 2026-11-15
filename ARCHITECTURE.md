@@ -191,12 +191,39 @@ A run-local acknowledgement token retains post-dispatch errors even if the step
 adapter raises after startup returns. Running workers still acknowledge only on
 `finished`; errors are retained in the final step record. Inline completion is
 held until the startup call returns, so setup errors cannot become false success.
-No timer, termination or coverage-state redesign is introduced.
+The dispatch guard introduces no polling or termination changes.
 
-Per-step outcomes are retained in `_re_run["outcomes"]` for later coverage work;
-`completed` for synchronous helpers means normal return, not verified full coverage.
-Comprehensive clean/partial/unknown verdicts and general panel overlap remain
-Stages 4D/4E. Lynis and drive checks remain outside RUN EVERYTHING.
+Stage 4D retains six coverage states per named step: succeeded, partial, failed,
+skipped, cancelled and unknown. `completed` is not accepted as successful evidence.
+Synchronous helpers return evidence quality; worker adapters combine execution
+outcome with parser/discovery quality. Findings severity is independent of coverage.
+All seven ordered steps must succeed, with no active run, before assessment coverage
+is complete. A findings-table snapshot gates the banner and drives both the final
+dialog and executive/technical exports. Replacing findings invalidates that snapshot.
+Any incomplete step prevents an unqualified clean verdict, including after later
+success. Discovered findings and diagnostic errors are retained.
+
+Package probes used by scans distinguish absent from unknown, without changing
+remediation's bool helper. Quick checks recognize usable output before recording
+coverage; sensors require readings; CVE discovery/API shape/full-page limits and
+cached-only updates reduce coverage conservatively. Update success covers the
+local package-list query, not proof that the host has every current repository patch. The CVE query remains limited
+to selected apt packages and is not a distribution/version applicability proof.
+Acceptance corrections: explicit SSH directive values must agree and use a
+recognized supported value. Identical duplicates and comments are allowed;
+contradictory/malformed evidence is unverified, never a passed SSH check. This
+reads the selected output only, not effective sshd Include/Match semantics.
+Temperature coverage combines return code, stdout readings and diagnostic errors
+on stderr. Usable readings/findings survive errors as partial evidence; no usable
+readings with errors is failed. Harmless diagnostic warnings do not alone fail a
+check. Only the sensors child uses LC_ALL=C to stabilize diagnostic recognition;
+no host locale or security settings are changed.
+
+RiskTracker calculations and existing severity thresholds are unchanged. CVE
+records below those thresholds are counted separately in coverage reporting, so
+zero risk score is never treated as proof of no findings. Coverage is a scan-time
+snapshot, not ongoing monitoring or certification. General panel overlap remains
+Stage 4E. Lynis and drive checks remain outside RUN EVERYTHING.
 
 
 ---
