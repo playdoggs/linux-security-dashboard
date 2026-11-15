@@ -3,7 +3,17 @@
 Audit date: **2026-04-23**
 
 ## Open
-None tracked. File a new `### N) …` block when one surfaces.
+### Streaming execution bounds (Increment 4 Stage 4B)
+- Stage 4A fixes terminal outcomes, not execution bounds. `StreamingCommandWorker`
+  still iterates stdout before its timed wait and drains stderr afterward.
+  Silent/partial-line stdout, full stderr, or inherited open pipes can block
+  indefinitely before a terminal signal. Output accumulation is not bounded.
+- Timeout attempts to kill only the direct child; bounded reaping, descriptor
+  closure and descendant handling remain unresolved. Unexpected read/password
+  write exceptions report failure/unknown but do not establish child termination.
+  Do not infer that a failed audit stopped every privileged descendant or retry
+  automatically. No new termination privileges or process-group kills were added.
+
 
 ## Regression guards (previously fixed — don't regress)
 
@@ -35,6 +45,15 @@ None tracked. File a new `### N) …` block when one surfaces.
 - Use separate success/failure/uncertain outcomes. Bounded pages must replace,
   not append to, the table. Old structured JSONL has no known lifecycle state.
 - Regression coverage: `tests/test_undo_persistence_ui.py`.
+
+### Streaming command outcomes (Increment 4 Stage 4A)
+- `finished_ok` means exit zero; `failed` means nonzero exit, timeout, missing
+  executable or exception. A returning run emits exactly one logical outcome.
+- Lynis audit failures skip success parsing, successful audit messages and the
+  healthy-completion callback. They show incomplete/unknown status and notify
+  `on_failed`. `QThread.finished` remains unconditional lifecycle cleanup.
+- Regression coverage: `tests/test_streaming_outcomes.py`; mocked subprocesses
+  do not establish real pipe draining, cancellation or timeout bounds.
 
 ### Other
 - Background sudo uses `sudo -S` with `stdin=DEVNULL` fallback.

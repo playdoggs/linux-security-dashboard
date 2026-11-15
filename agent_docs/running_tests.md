@@ -97,3 +97,17 @@ failed against the original raw-descriptor implementation (`ACQUIRED` too early)
 A separate test checks that creation closes its private descriptor before publishing
 the database, never raw-opens the published name, and removes the staging name.
 These tests use only temporary databases; they do not validate every filesystem.
+
+## Increment 4 Stage 4A streaming outcome tests
+
+`tests/test_streaming_outcomes.py` extracts production worker and callback methods
+without importing/launching the GUI. Mocked `Popen` streams cover zero/nonzero exit,
+missing executables, timeout (including failed kill), unexpected startup/read/
+password-write exceptions and exactly one terminal outcome. Actual Lynis callback
+chains parse/report success only on success and call the sidebar failure handler
+otherwise. Real QThreads with mocked subprocesses exercise production WorkerMixin
+cleanup through `QThread.finished` on both success and failure.
+
+Run `python3 -B -m unittest discover -s tests -q`. These fixtures do not prove
+real timeout bounds, concurrent pipe draining, descriptor cleanup or descendant
+termination; those remain Stage 4B. No sudo or host commands execute in these tests.

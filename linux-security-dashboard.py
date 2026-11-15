@@ -1880,7 +1880,8 @@ class StreamingCommandWorker(QThread):
 
     output_ready = pyqtSignal(str)
     error_ready  = pyqtSignal(str)
-    finished_ok  = pyqtSignal()
+    finished_ok  = pyqtSignal()  # Exit zero only
+    failed       = pyqtSignal()  # Nonzero exit, timeout or exception
 
     def __init__(self, cmd, sudo=False, timeout=300, password=None):
         super().__init__()
@@ -1888,8 +1889,12 @@ class StreamingCommandWorker(QThread):
         self.sudo     = sudo
         self.timeout  = timeout
         self.password = password
+        self.failure_reason = None
+        self.full_output = ""
 
     def run(self):
+        succeeded = False
+        self.failure_reason = "exception"
         try:
             if self.sudo and self.password:
                 full = ["sudo", "-S"] + self.cmd
@@ -1915,12 +1920,9 @@ class StreamingCommandWorker(QThread):
             # Send the sudo password once, then close stdin so the child
             # doesn't hang waiting for more input.
             if input_bytes is not None and proc.stdin is not None:
-                try:
-                    proc.stdin.write(input_bytes.decode())
-                    proc.stdin.flush()
-                    proc.stdin.close()
-                except Exception:
-                    pass
+                proc.stdin.write(input_bytes.decode())
+                proc.stdin.flush()
+                proc.stdin.close()
 
             # Collect full stdout on the worker object so the caller can
             # grab it from `finished_ok` without replaying every emission.
@@ -1932,13 +1934,8 @@ class StreamingCommandWorker(QThread):
                     if clean:
                         self.output_ready.emit(clean)
 
-            try:
-                proc.wait(timeout=self.timeout)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                self.error_ready.emit(
-                    f"Command timed out after {self.timeout} seconds."
-                )
+            # Stage 4B will apply the deadline to pipe reads as well as wait().
+            proc.wait(timeout=self.timeout)
 
             stderr = proc.stderr.read() if proc.stderr is not None else ""
             if stderr:
@@ -1952,14 +1949,32 @@ class StreamingCommandWorker(QThread):
 
             # Expose full stdout for post-run parsers (e.g. Lynis).
             self.full_output = "".join(buf)
+            succeeded = proc.returncode == 0
+            self.failure_reason = None if succeeded else "nonzero_exit"
+            if not succeeded and not stderr:
+                self.error_ready.emit(f"Command failed with exit code {proc.returncode}.")
 
+        except subprocess.TimeoutExpired:
+            self.failure_reason = "timeout"
+            self.error_ready.emit(f"Command timed out after {self.timeout} seconds.")
+            # Preserve the existing direct-child kill attempt. Bounded draining,
+            # reaping and descendant handling belong to Stage 4B.
+            try:
+                proc.kill()
+            except Exception as e:
+                logging.error(f"StreamingCommandWorker timeout cleanup: {e}")
+                self.error_ready.emit(f"Could not stop command; outcome unknown: {e}")
         except FileNotFoundError:
+            self.failure_reason = "missing_executable"
             self.error_ready.emit(f"Command not found: {self.cmd[0]}")
         except Exception as e:
             logging.error(f"StreamingCommandWorker error: {e}")
             self.error_ready.emit(str(e))
         finally:
-            self.finished_ok.emit()
+            if succeeded:
+                self.finished_ok.emit()
+            else:
+                self.failed.emit()
 
 
 class HttpWorker(QThread):
@@ -4415,6 +4430,14 @@ class LynisPanel(QWidget, WorkerMixin):
         )
         if on_complete:
             w.finished_ok.connect(on_complete)
+        w.failed.connect(lambda: self.status.setText(
+            "Lynis audit failed or did not complete reliably — results are incomplete/unknown."
+        ))
+        w.failed.connect(lambda: self.terminal.append_warn(
+            "Lynis audit unsuccessful; no clean assessment can be concluded. See errors above."
+        ))
+        if on_failed:
+            w.failed.connect(on_failed)
         self._start_worker(w)
 
     def _read_lynis_log(self):

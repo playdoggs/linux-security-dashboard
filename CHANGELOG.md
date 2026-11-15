@@ -5,6 +5,12 @@ All notable changes to Linux Security Dashboard are documented here.
 ## [Unreleased] — v4.2.1
 
 ### Changed
+- Increment 4 Stage 4A: streaming commands emit exactly one terminal outcome
+  when execution returns: success only for exit zero, failure for nonzero exit,
+  timeout, missing executable or exceptions. Failed Lynis audits skip successful
+  parsing/completion and notify the sidebar failure handler. Thread cleanup still
+  uses `QThread.finished`. Blocking pipe reads and full process cleanup remain
+  deferred to Stage 4B.
 - Increment 3 (pending review): added and integrated a protected SQLite history
   store with stable IDs, atomic claims, durable outcomes and append-only events.
   Claims commit before worker creation; outcomes commit before UI state updates.
