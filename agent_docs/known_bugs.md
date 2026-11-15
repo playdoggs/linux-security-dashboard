@@ -21,12 +21,20 @@ None tracked. File a new `### N) …` block when one surfaces.
   operations can construct sudo worker argv; unknown/legacy rows stay disabled.
 - Validate exact package/backend and reviewed service targets; derive display
   warnings from the operation, not saved risk labels. Revalidate after dialogs.
-- Existing history is not migrated/deleted. Persistent removal after successful
-  rollback is still an open defect, separate from the privilege boundary.
+- Existing JSONL is read-only legacy history, never executable or auto-imported.
+  Increment 3 stores new records and outcomes in SQLite; failed/pending/completed/
+  unknown records never automatically become actionable.
 - Regression coverage: `tests/test_structured_undo.py` (mocks/temporary files).
 
-### Undo row removal
-- Match on `time + action + cmd + undo_cmd` (four fields) — never on `time` alone.
+### Durable undo lifecycle (Increment 3)
+- Identify records by UUID, never timestamp or command text. Duplicate metadata
+  must not update a different record. Retain completed records in audit history.
+- Persist a pending claim before worker creation; persist outcomes before UI
+  updates. Storage failure must never offer memory-only execution.
+- Pending after restart means uncertain; do not auto-retry or reset it to available.
+- Use separate success/failure/uncertain outcomes. Bounded pages must replace,
+  not append to, the table. Old structured JSONL has no known lifecycle state.
+- Regression coverage: `tests/test_undo_persistence_ui.py`.
 
 ### Other
 - Background sudo uses `sudo -S` with `stdin=DEVNULL` fallback.

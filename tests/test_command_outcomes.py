@@ -150,16 +150,25 @@ class CommandOutcomes(unittest.TestCase):
 
     def test_failed_undo_retains_entry(self):
         undo = method("UndoPanel", "_run_undo")
-        obj = SimpleNamespace(terminal=Mock(), _remove_undo_entry_after_rollback=Mock())
+        failed = method("UndoPanel", "_undo_worker_failed")
+        available = dict(record_id="record-id", state="available", schema_version=2,
+                         undo=dict(operation="service_enable", service="xrdp"))
+        pending = dict(available, state="pending", attempt_id="attempt-id")
+        store = Mock()
+        store.get.side_effect = [available, available, pending]
+        store.claim.return_value = dict(record_id="record-id", attempt_id="attempt-id",
+                                        argv=["systemctl", "enable", "--now", "xrdp"])
+        obj = SimpleNamespace(terminal=Mock(), history_store=store, _inflight=set(),
+                              _finish_undo=Mock(), _reload_history=Mock(), _history_error=Mock())
+        obj._undo_worker_failed = lambda *args: failed(obj, *args)
         obj._start_worker = lambda worker: worker.run()
         box = SimpleNamespace(question=Mock(return_value=1),
                               StandardButton=SimpleNamespace(Yes=1, No=2))
         with patch.dict(NS, QMessageBox=box, prompt_for_sudo_password=Mock(return_value=b"fake")):
             with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 1, b"", b"failed")):
-                undo(obj, dict(schema_version=2,
-                               undo=dict(operation="service_enable", service="xrdp"),
-                               undo_cmd="sudo systemctl enable --now xrdp", action="disable xrdp"))
-        obj._remove_undo_entry_after_rollback.assert_not_called()
+                undo(obj, available)
+        obj._finish_undo.assert_called_once_with("record-id", "attempt-id", "failed", "nonzero_exit")
+        store.finish.assert_not_called()  # The real finish handler is covered by SQLite integration tests.
 
     def test_successful_wizard_runs_steps_and_restores_controls(self):
         advance = method("GuidedWizard", "_run_next_fix_cmd")

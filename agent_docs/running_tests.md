@@ -32,8 +32,8 @@ rejection before sudo/worker creation, mutation during dialogs, cancellation,
 and success/failure/timeout/missing-executable behavior. AST extraction avoids
 application startup; Qt widgets and all subprocess calls are mocked. History
 I/O uses temporary directories only. Run through the unittest command above.
-The Increment 1 rollback fixture now uses a valid structured operation; its
-failure-retention assertion is unchanged. No real packages/services are touched.
+The Increment 1/2 rollback fixtures now use persisted IDs and structured
+operations; their failure-retention and generated-command assertions remain. No real packages/services are touched.
 
 ## Baseline
 ```bash
@@ -60,3 +60,40 @@ python3 linux-security-dashboard.py
 **Tool installs** — offline click on INSTALL shows "Requires Internet" dialog and does not prompt for sudo.
 
 **Theme / language / profile** — theme switch updates persistent widgets; language choice persists; profile affects NORMAL tagging.
+
+## Increment 3 Stage A storage tests
+
+`tests/test_undo_history_store.py` extracts the production storage class and pure
+validator without importing the application. All databases/files are in temporary
+directories. Coverage includes protected paths and sidecars, schema rejection,
+UUID identity, immutable payloads/events, lifecycle transitions, concurrent claims,
+lock timeouts, failed writes/commit acknowledgement, reopen persistence, no replay,
+uncertain outcomes, and bounded keyset paging. Two short-lived Python child-process
+tests exit abruptly before/after a temporary database commit; they execute no host
+commands and verify recovery of committed versus uncommitted state.
+
+Run with the existing unittest discovery command (use `python3 -B` to suppress
+bytecode writes). No full GUI, privileged command, package or systemd operation is
+used. Storage tests alone do not establish full GUI behavior.
+
+## Increment 3 Stage B integration tests
+
+`tests/test_undo_persistence_ui.py` runs production panel/verification methods
+against temporary real SQLite stores with mocked widgets and subprocesses. It
+checks commit-before-worker ordering, outcome-before-success UI ordering, no
+memory-only fallback, failed/uncertain claims and outcome writes, no automatic
+replay after restart, repeated/nested clicks, uncertain dispatch, bounded view
+paging, and unchanged display-only legacy files. Existing Increment 1/2 tests
+continue to run; rollback fixtures now refer to persisted records. No full GUI
+launch or privileged command occurs.
+
+### SQLite POSIX-lock regression
+
+The storage suite holds a production connection's `BEGIN IMMEDIATE` transaction
+while a fresh Python subprocess attempts a conflicting write. It must report
+`LOCKED` both before and after a second production connection (including existing
+store initialization checks) opens/closes, then `ACQUIRED` after rollback. This test
+failed against the original raw-descriptor implementation (`ACQUIRED` too early).
+A separate test checks that creation closes its private descriptor before publishing
+the database, never raw-opens the published name, and removes the staging name.
+These tests use only temporary databases; they do not validate every filesystem.

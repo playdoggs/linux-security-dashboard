@@ -159,6 +159,21 @@ RUN EVERYTHING (`SideBar.run_everything()` → `_re_tick()`, [5730-5789](linux-s
 
 ---
 
+## Increment 3 transactional undo history
+
+`UndoHistoryStore` remains in the single Python module. Stable UUIDs identify
+records; conditional committed claims precede privileged worker construction.
+Immutable operation payloads and append-only events retain audit context.
+`UndoPanel` initializes the protected store and pages Actionable/Audit history
+with at most 200 rows; a separate Legacy view never executes/imports old JSONL.
+
+`FindingsTable._verify` records verified successful remediation through the panel's
+store before adding session reporting data. UI state refresh follows persisted
+undo outcomes. `CommandWorker.failure_reason` distinguishes nonzero/missing-command
+failure from timeout/uncertain execution while preserving success/failure signals.
+No retry/reactivation or database replacement is automatic. See
+`agent_docs/database_schema.md` for schema, lifecycle and protected paths.
+
 ## Storage paths
 
 All under `$HOME` — **no root required for normal app state**.
@@ -201,7 +216,8 @@ only supported forward-action reversals; `build_undo_argv` validates the operati
 and constructs executable arguments. `undo_presentation` derives previews and
 warnings from that operation. Legacy, unknown-format and invalid-operation rows
 are non-executable. Execution validates before dialogs and again afterward.
-Loading preserves the file; successful rollback persistence is not fixed here.
+The file is now legacy display-only, including its structured records. New records
+and durable outcomes are stored in SQLite; no JSONL import or rewrite occurs.
 See SECURITY.md S-002 for target restrictions, limits and residual trust.
 
 The example below describes legacy display metadata, not executable authority:

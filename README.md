@@ -32,9 +32,11 @@ This tool assumes you don't — and that's fine.
 - **Risk Score** — 0 to 100, updates live as scans run
 - **Duke Nukem health face** — gets progressively more battered as your risk score rises 😄
 - **Undo Log** — supported actions record validated reverse operations across restarts.
-  Legacy history is visible but cannot execute automatically. Reverse operations
-  may restore exposure and do not guarantee previous configuration/state; completed
-  rollback entries currently reappear after restart (persistent cleanup is pending).
+  New history uses protected SQLite records with durable undo outcomes. Completed,
+  failed and uncertain attempts remain in audit history and cannot automatically
+  replay. Legacy JSONL is visible but non-executable. Pages show at most 200 rows.
+  Reverse operations may restore exposure and do not guarantee prior configuration
+  or state; persistence errors are reported rather than offering memory-only undo.
 - **HTML Report** — everyday language (Executive) or full technical deep-dive; filename auto-tagged with hostname
 - **Auto-detects** what kind of machine you're running (Gaming Rig, Home Server, Docker Host, etc.) and adjusts what's flagged as normal vs suspicious
 - **Multiple themes** — Dark, Hacker, Solarized, Light, Pink

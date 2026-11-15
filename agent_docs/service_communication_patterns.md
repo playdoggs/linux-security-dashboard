@@ -24,13 +24,21 @@
 5. `finished_ok` → summary counters.
 
 ## Action + undo
-Remediation: confirm → `CommandWorker` → verify → append structured undo record
-plus display metadata to `UNDO_LOG` and JSONL → refresh `UndoPanel`.
-Undo: validate structured operation → generated confirmation → revalidate → sudo
-prompt → revalidate unchanged argv → `CommandWorker`. Only `finished_ok` removes
-the table/memory entry; failure/timeout retains it. Legacy/invalid records cannot
-prompt or create a worker. Existing history is never automatically migrated;
-successful rollback does not yet update persistent history.
+Remediation: confirm → `CommandWorker` → verify → SQLite create+audit commit →
+add record UUID to session report → refresh the current history page. If saving
+fails, report that remediation succeeded but history could not be confirmed saved;
+do not expose a memory-only undo entry.
+
+Undo: selected UUID → fresh store get/validate → generated confirmation → fresh
+get/validate → sudo authorization → atomic claim+audit commit → fresh claimed
+operation validation → `CommandWorker`. Local in-flight IDs prevent nested clicks;
+conditional claims prevent cross-instance duplicate execution.
+
+Success/failure callbacks persist outcome+audit before refreshing by UUID. Nonzero
+exit/missing executable are failed; timeout/unexpected execution are uncertain.
+Failed outcome persistence leaves pending/uncertain state and a visible error.
+Completed outcomes remain in audit history. No automatic retry/reactivation.
+Legacy JSONL is paged separately and cannot trigger dialogs or worker creation.
 
 ## RUN EVERYTHING
 `SideBar.run_everything()` queues steps → `_re_tick()` polls worker completion → on empty queue fires callback → `RunEverythingSummaryDialog`.

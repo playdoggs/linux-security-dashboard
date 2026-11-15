@@ -11,12 +11,14 @@ from pathlib import Path
 import re
 import shlex
 import unittest
+from test_undo_history_store import Store, StorageError
 
 SOURCE = Path(__file__).resolve().parents[1] / 'linux-security-dashboard.py'
 TREE = ast.parse(SOURCE.read_text())
 NS = dict(re=re, shlex=shlex, PKG_MGR='apt', json=json, logging=logging,
           subprocess=subprocess, QThread=QThread, pyqtSignal=pyqtSignal,
-          T={'OK': 'green'}, strip_ansi=lambda text: text)
+          T={'OK': 'green'}, strip_ansi=lambda text: text,
+          UndoHistoryError=StorageError, UNDO_LOG=[])
 NAMES = {'UNDO_SERVICE_TARGETS', 'UNDO_PACKAGE_RE', 'build_undo_argv',
          'make_undo_operation', 'make_undo_cmd', 'UNDO_METADATA_FIELDS',
          'MAX_UNDO_LINE_BYTES', 'MAX_UNDO_HISTORY_BYTES', 'normalize_undo_record',
@@ -118,6 +120,19 @@ class UndoIntegration(unittest.TestCase):
                      rollback_risk='forged reassuring text')
         return value
 
+    def panel(self, value):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        store = Store(Path(temporary.name) / 'state', manager='apt')
+        record_id = store.create(value)
+        obj = SimpleNamespace(history_store=store, _inflight=set(), terminal=Mock(),
+                              _reload_history=Mock(), _history_error=Mock())
+        finish = method('UndoPanel', '_finish_undo')
+        failed = method('UndoPanel', '_undo_worker_failed')
+        obj._finish_undo = lambda *args: finish(obj, *args)
+        obj._undo_worker_failed = lambda *args: failed(obj, *args)
+        return obj, store.get(record_id)
+
     def test_successful_action_creates_structured_undo(self):
         act = method('FindingsTable', '_act')
         obj = SimpleNamespace(terminal=Mock(), _verify=Mock())
@@ -175,7 +190,7 @@ class UndoIntegration(unittest.TestCase):
                       {'schema_version': 99, 'undo': {}},
                       record(operation='package_install', manager='apt', package='-option')):
             with self.subTest(value=value):
-                obj = SimpleNamespace(terminal=Mock())
+                obj = SimpleNamespace(terminal=Mock(), history_store=None, _history_error=Mock())
                 prompt, worker, question = Mock(), Mock(), Mock()
                 with patch.dict(NS, prompt_for_sudo_password=prompt, CommandWorker=worker,
                                 QMessageBox=SimpleNamespace(question=question)):
@@ -190,7 +205,7 @@ class UndoIntegration(unittest.TestCase):
                         subprocess.CompletedProcess([], 1, b'', b'failed'),
                         subprocess.TimeoutExpired('fake', 1), FileNotFoundError()):
             with self.subTest(outcome=outcome):
-                obj = SimpleNamespace(terminal=Mock(), _remove_undo_entry_after_rollback=Mock())
+                obj, persisted = self.panel(self.valid())
                 workers = []
                 def start(worker):
                     workers.append(worker)
@@ -204,7 +219,7 @@ class UndoIntegration(unittest.TestCase):
                     with patch.object(subprocess, 'run',
                                       return_value=outcome if isinstance(outcome, subprocess.CompletedProcess) else None,
                                       side_effect=outcome if isinstance(outcome, Exception) else None) as run:
-                        execute(obj, self.valid())
+                        execute(obj, persisted)
                 command = run.call_args.args[0]
                 self.assertEqual(command[-4:], ['apt', 'install', '-y', 'example'])
                 text = box.question.call_args.args[2]
@@ -213,43 +228,58 @@ class UndoIntegration(unittest.TestCase):
                 self.assertNotIn('forged', text)
                 self.assertIn('HIGH RISK', text)
                 if isinstance(outcome, subprocess.CompletedProcess) and outcome.returncode == 0:
-                    obj._remove_undo_entry_after_rollback.assert_called_once()
+                    self.assertEqual(obj.history_store.get(persisted['record_id'])['state'], 'completed')
                 else:
-                    obj._remove_undo_entry_after_rollback.assert_not_called()
+                    expected = 'outcome-unknown' if isinstance(outcome, subprocess.TimeoutExpired) else 'failed'
+                    self.assertEqual(obj.history_store.get(persisted['record_id'])['state'], expected)
+                self.assertEqual(obj._inflight, set())
 
     def test_cancellation_and_mutation_during_dialogs_execute_nothing(self):
         execute = method('UndoPanel', '_run_undo')
         for mode in ('cancel', 'password_cancel', 'confirm_mutation', 'password_mutation'):
             with self.subTest(mode=mode):
-                value = self.valid()
+                obj, value = self.panel(self.valid())
+                real_get = obj.history_store.get
+                changed = []
+                def get(record_id):
+                    fresh = real_get(record_id)
+                    if changed:
+                        fresh['undo']['package'] = changed[0]
+                    return fresh
                 def confirm(*args):
                     if mode == 'confirm_mutation':
-                        value['undo']['package'] = 'different'
+                        changed.append('different')
                     return 2 if mode == 'cancel' else 1
                 def password(*args, **kwargs):
                     if mode == 'password_mutation':
-                        value['undo']['package'] = '-invalid'
+                        changed.append('-invalid')
                     return None if mode == 'password_cancel' else b'fake'
                 box = SimpleNamespace(question=Mock(side_effect=confirm),
                                       StandardButton=SimpleNamespace(Yes=1, No=2))
                 prompt, worker = Mock(side_effect=password), Mock()
                 with patch.dict(NS, QMessageBox=box, prompt_for_sudo_password=prompt,
                                 CommandWorker=worker):
-                    execute(SimpleNamespace(terminal=Mock()), value)
+                    with patch.object(obj.history_store, 'get', side_effect=get):
+                        execute(obj, value)
                 worker.assert_not_called()
+                self.assertEqual(obj._inflight, set())
                 if mode in ('cancel', 'confirm_mutation'):
                     prompt.assert_not_called()
+                expected = 'outcome-unknown' if mode == 'password_mutation' else 'available'
+                self.assertEqual(real_get(value['record_id'])['state'], expected)
 
     def test_table_disables_legacy_and_invalid_but_enables_valid_records(self):
         add = method('UndoPanel', '_add_row')
         for value, enabled in (({'undo_cmd': 'sudo attacker-command'}, False),
                                ({'schema_version': 999, 'undo': {}}, False),
-                               (self.valid(), True)):
+                               ({**self.valid(), 'record_id': 'persisted-id', 'state': 'available'}, True),
+                               ({**self.valid(), 'record_id': 'persisted-id', 'state': 'completed'}, False),
+                               ({**self.valid(), 'record_id': 'persisted-id', 'state': 'pending'}, False)):
             with self.subTest(enabled=enabled, value=value):
                 table = Mock()
                 table.rowCount.return_value = 0
                 button = Mock()
-                obj = SimpleNamespace(table=table, _update_empty_state=Mock())
+                obj = SimpleNamespace(table=table, _update_empty_state=Mock(), _inflight=set())
                 palette = dict(OK='green', DANGER='red', WARN='yellow', TEXT_DIM='gray', TEXT_MAIN='black')
                 with patch.dict(NS, T=palette, QTableWidgetItem=Mock(), QColor=lambda c: c,
                                 QFont=Mock(Weight=SimpleNamespace(Bold=1)), fs=lambda *args: 10,

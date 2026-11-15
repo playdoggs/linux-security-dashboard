@@ -54,8 +54,8 @@ or options through the undo record. User confirmation and sudo policy remain
 necessary. Installed package repositories, package scripts, local service
 units and system executable resolution are trusted. This is not protection
 against replacement of the application or compromise of the user process itself.
-File symlink hardening and the successful-rollback history persistence defect
-remain separate work. Exit zero does not prove complete restoration.
+New history uses the protected SQLite store introduced in Increment 3; old JSONL
+is now display-only. Other application file hardening remains separate work. Exit zero does not prove complete restoration.
 
 Validation: mocked worker/callback tests, pure parser tests and temporary-file
 history tests in `tests/test_structured_undo.py`; no privileged commands or full
@@ -159,3 +159,51 @@ remain at their earlier review status; they were not re-audited in this incremen
 - [B-002](BUGS.md#b-002): saved profile read-but-not-applied — has security implications because the user's chosen "what's normal for this machine" tag never persists, so HIGH/MEDIUM tagging may differ between sessions.
 - [R-010](CODE_REVIEW.md#r-010): the `cmd.split()` vs `shlex.split()` inconsistency tracked here as S-001 / S-002 also shows up in the code-review pass.
 - [P-006](PERFORMANCE.md#p-006): sequential CVE scan timing has a security-adjacent angle (a slow CVE pass discourages users from running it).
+
+## Increment 3 storage and execution boundary (pending acceptance review)
+
+The new SQLite API checks ownership, 0700 directory/0600 regular-file permissions,
+symlinks including journal sidecars and hard links, schema/version, durability
+settings and operation validity. Connections stay within their creating thread;
+conditional pending claims and outcome/audit writes commit atomically. A failed
+or uncertain claim returns no executable claim result. Completed, failed and
+outcome-unknown IDs cannot be reactivated; pending IDs are never retried on open.
+
+The existing Increment 2 validator remains unchanged. Database metadata and state
+are not substitutes for operation validation or user/sudo confirmation. The store
+is user-owned, not a tamper-proof log or a privilege broker. Same-user/root path
+replacement, compromised repositories/services, broken filesystem locking and
+storage that lies about flush completion remain outside these guarantees.
+
+Only SQLite opens the published database inode. New stores are created as private
+0600 staging files, flushed and closed before a no-replacement hard-link publication;
+the staging name is then removed and the directory flushed. Existing stores use
+non-opening metadata checks before/after SQLite connects. This avoids independent
+`close()` calls releasing another connection's process-wide POSIX database locks.
+A fresh-process regression checks that overlapping connection closure preserves a
+held write lock, then permits a writer after rollback.
+
+Directory traversal rejects symlinks and uses a pinned directory descriptor.
+Database/sidecar checks reject observed symlinks, unsafe ownership, modes and types;
+pre/post device/inode comparisons detect observed database replacement. They do
+not prove which inode SQLite opened against a same-UID swap-and-restore race.
+The protected directory excludes other users, not malicious same-user/root code.
+A crash during initial publication may leave a private staging file, an empty
+unsupported store, or a second hard link: subsequent opening fails closed rather
+than silently repairing/replacing it. Reliable local filesystem hard links, POSIX
+locking and fsync are required; network/cloud-sync concurrency is not validated.
+
+Stage B now connects the GUI to this boundary. Undo execution takes only a record
+UUID from the row, loads and validates the operation, obtains confirmation and
+sudo authorization, commits an atomic claim, then reloads/revalidates the claimed
+operation before constructing a worker. A local in-flight guard covers nested
+dialogs and repeated clicks; the database claim covers concurrent instances.
+Persisted outcomes precede state refresh. Uncertain claim acknowledgement returns
+no dispatch; uncertain outcome storage leaves the operation non-actionable.
+
+Legacy free-form and structured JSONL entries have no execution identity and are
+always display-only. New history never appends to/migrates that file. Malformed
+or unsupported SQLite stores produce visible errors, not replacement stores.
+No persistent database in the user's home has been created or tested during
+validation; all databases and command outcomes used mocks/temporary resources.
+The full application/privileged paths have not been run.

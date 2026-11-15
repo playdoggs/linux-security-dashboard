@@ -24,6 +24,10 @@ import base64       # Decoding the embedded face images
 import html         # Safely escaping text in the HTML report
 import shlex        # Safe splitting/quoting of command strings
 import logging      # Writing errors to a log file without crashing the app
+import sqlite3      # Transactional undo lifecycle storage (Increment 3 Stage A)
+import stat         # Validate protected history paths
+import uuid         # Stable record and attempt identifiers
+from contextlib import contextmanager
 import configparser # Reading and writing the user's saved preferences
 import shutil       # Checking if external tools (like pkexec) are installed
 import webbrowser   # Auto-open saved HTML reports in the default browser
@@ -1331,7 +1335,10 @@ def undo_presentation(record, manager):
 
 
 def save_undo_entry(entry):
-    """Append new-format history; never migrate or replace existing records."""
+    """Legacy append helper; the application now saves new history to SQLite.
+
+    Retained for compatibility tests, not called by the application UI.
+    """
     try:
         if type(entry) is not dict or type(entry.get("schema_version")) is not int or entry["schema_version"] != 2:
             raise ValueError("Only new-format records may be saved")
@@ -1346,9 +1353,11 @@ def save_undo_entry(entry):
         logging.error(f"Failed to save undo entry: {e}")
 
 
-def load_undo_log():
+def load_undo_log(limit=200, offset=0, strict=False):
     """Load bounded display records. Invalid/legacy operations remain non-executable."""
-    entries = []
+    if type(limit) is not int or not 1 <= limit <= 200 or type(offset) is not int or offset < 0:
+        raise ValueError("Invalid legacy history page")
+    entries, seen = [], 0
     try:
         if UNDO_LOG_FILE.exists():
             with open(str(UNDO_LOG_FILE), "rb") as f:
@@ -1370,14 +1379,378 @@ def load_undo_log():
                         entry = normalize_undo_record(json.loads(raw.decode("utf-8")))
                         if entry is None:
                             raise ValueError("Undo entry must be an object")
-                        entries.append(entry)
+                        if seen >= offset:
+                            entries.append(entry)
+                        seen += 1
+                        if len(entries) >= limit:
+                            break
                     except (ValueError, RecursionError):
                         logging.warning("Malformed undo history record skipped")
                 if consumed >= MAX_UNDO_HISTORY_BYTES:
                     logging.warning("Undo history read limit reached; remaining records not loaded")
     except Exception as e:
+        if strict:
+            raise UndoHistoryError(f"Legacy history could not be read: {e}") from e
         logging.error(f"Failed to load undo log: {e}")
     return entries
+
+class UndoHistoryError(Exception):
+    """Storage unavailable or inconsistent: callers must not dispatch an undo."""
+
+
+class UndoHistoryStore:
+    """Protected transactional history used by the Undo panel.
+
+    Each call owns and closes its connection in its calling thread. Opening a
+    store never imports JSONL or changes pending/completed records. Local Unix
+    filesystems with working SQLite locking and fsync are required. This is not
+    a tamper-proof log against the same user or root.
+    """
+
+    VERSION = 1
+    APPLICATION_ID = 0x4C534455
+    PAGE_SIZE = 200
+    DB_NAME = "history.sqlite3"
+    SCHEMA = (
+        """CREATE TABLE undo_records (
+            seq INTEGER PRIMARY KEY,
+            record_id TEXT NOT NULL UNIQUE,
+            operation_json TEXT NOT NULL,
+            metadata_json TEXT NOT NULL,
+            state TEXT NOT NULL CHECK(state IN
+                ('available','pending','completed','failed','outcome-unknown')),
+            active_attempt TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK ((state='available' AND active_attempt IS NULL) OR
+                   (state!='available' AND active_attempt IS NOT NULL)))""",
+        """CREATE TABLE undo_events (
+            seq INTEGER PRIMARY KEY,
+            event_id TEXT NOT NULL UNIQUE,
+            record_id TEXT NOT NULL REFERENCES undo_records(record_id),
+            attempt_id TEXT,
+            state TEXT NOT NULL CHECK(state IN
+                ('available','pending','completed','failed','outcome-unknown')),
+            reason TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(attempt_id,state))""",
+        "CREATE INDEX history_state_seq ON undo_records(state,seq)",
+        "CREATE INDEX events_record_seq ON undo_events(record_id,seq)",
+        """CREATE TRIGGER immutable_undo_payload BEFORE UPDATE OF
+            record_id, operation_json, metadata_json, created_at, seq ON undo_records
+            BEGIN SELECT RAISE(ABORT,'immutable undo record'); END""",
+        """CREATE TRIGGER retain_undo_records BEFORE DELETE ON undo_records
+            BEGIN SELECT RAISE(ABORT,'retain undo audit'); END""",
+        """CREATE TRIGGER valid_undo_transition BEFORE UPDATE ON undo_records
+            WHEN NOT ((OLD.state='available' AND NEW.state='pending'
+                       AND NEW.active_attempt IS NOT NULL) OR
+                      (OLD.state='pending' AND NEW.state IN
+                       ('completed','failed','outcome-unknown')
+                       AND NEW.active_attempt=OLD.active_attempt))
+            BEGIN SELECT RAISE(ABORT,'invalid undo transition'); END""",
+        """CREATE TRIGGER immutable_undo_events BEFORE UPDATE ON undo_events
+            BEGIN SELECT RAISE(ABORT,'immutable undo event'); END""",
+        """CREATE TRIGGER retain_undo_events BEFORE DELETE ON undo_events
+            BEGIN SELECT RAISE(ABORT,'retain undo event'); END""",
+    )
+
+    def __init__(self, state_dir=None, manager=None, timeout=1.0):
+        self.state_dir = Path(state_dir) if state_dir is not None else Path.home() / ".audit-dashboard-history"
+        self.manager = PKG_MGR if manager is None else manager
+        if type(timeout) not in (int, float) or not 0 < timeout <= 2:
+            raise ValueError("History lock timeout must be positive and at most two seconds")
+        self.timeout = timeout
+        # Initialization is explicit: no store is instantiated at module import.
+        with self._connection(initialize=True) as db:
+            if db.execute("PRAGMA quick_check(1)").fetchone() != ("ok",):
+                raise UndoHistoryError("History integrity check failed; preserve the store for recovery")
+
+    @staticmethod
+    def _id(value):
+        if type(value) is not str:
+            raise UndoHistoryError("Invalid history identifier")
+        try:
+            valid = str(uuid.UUID(value)) == value
+        except ValueError:
+            valid = False
+        if not valid:
+            raise UndoHistoryError("Invalid history identifier")
+        return value
+
+    @staticmethod
+    def _now():
+        return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    @staticmethod
+    def _check_stat(info, directory=False):
+        expected = stat.S_ISDIR if directory else stat.S_ISREG
+        mode = 0o700 if directory else 0o600
+        if (not expected(info.st_mode) or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) != mode
+                or (not directory and info.st_nlink != 1)):
+            raise UndoHistoryError("Unsafe history ownership, permissions or file type")
+
+    def _open_directory(self, initialize):
+        path = self.state_dir
+        if not path.is_absolute() or ".." in path.parts:
+            raise UndoHistoryError("History directory must be an absolute path without '..'")
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        fd = os.open(path.anchor, flags)
+        try:
+            for index, part in enumerate(path.parts[1:]):
+                last = index == len(path.parts[1:]) - 1
+                try:
+                    next_fd = os.open(part, flags, dir_fd=fd)
+                except FileNotFoundError:
+                    if not initialize or not last:
+                        raise
+                    try:
+                        os.mkdir(part, 0o700, dir_fd=fd)
+                        os.fsync(fd)
+                    except FileExistsError:
+                        pass  # Another instance created it; validate below.
+                    next_fd = os.open(part, flags, dir_fd=fd)
+                os.close(fd)
+                fd = next_fd
+            self._check_stat(os.fstat(fd), directory=True)
+            return fd
+        except BaseException:
+            os.close(fd)
+            raise
+
+    def _check_files(self, directory_fd):
+        # SQLite's journal lives alongside the DB. Refuse unexpected WAL mode
+        # and unsafe sidecars, including dangling links, before SQLite opens them.
+        for name in (self.DB_NAME, self.DB_NAME + "-journal",
+                     self.DB_NAME + "-wal", self.DB_NAME + "-shm"):
+            try:
+                info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                if name == self.DB_NAME:
+                    raise UndoHistoryError("History database disappeared")
+                continue
+            self._check_stat(info)
+
+    def _check_schema(self, db):
+        if (db.execute("PRAGMA user_version").fetchone()[0] != self.VERSION
+                or db.execute("PRAGMA application_id").fetchone()[0] != self.APPLICATION_ID):
+            raise UndoHistoryError("Unsupported history database; no automatic replacement")
+        actual = {row[0]: row[1] for row in db.execute(
+            "SELECT name,sql FROM sqlite_master WHERE sql IS NOT NULL")}
+        expected = {}
+        for statement in self.SCHEMA:
+            name = statement.split()[2]
+            expected[name] = statement
+        if actual != expected:
+            raise UndoHistoryError("Unexpected history schema; preserve it for recovery")
+
+    @contextmanager
+    def _connection(self, initialize=False):
+        directory_fd = None
+        db = None
+        try:
+            directory_fd = self._open_directory(initialize)
+            created = False
+            if initialize:
+                try:
+                    os.stat(self.DB_NAME, dir_fd=directory_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    # Never independently open/close the published DB inode:
+                    # POSIX close() could release another SQLite connection's locks.
+                    # Close a private inode BEFORE publishing it without replacement.
+                    staging = f".history-create-{uuid.uuid4()}"
+                    flags = os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_CREAT | os.O_EXCL
+                    staging_fd = os.open(staging, flags, 0o600, dir_fd=directory_fd)
+                    try:
+                        try:
+                            self._check_stat(os.fstat(staging_fd))
+                            os.fsync(staging_fd)
+                        finally:
+                            os.close(staging_fd)
+                        try:
+                            os.link(staging, self.DB_NAME, src_dir_fd=directory_fd,
+                                    dst_dir_fd=directory_fd, follow_symlinks=False)
+                            created = True
+                        except FileExistsError:
+                            pass  # Another initializer won; validate its store.
+                    finally:
+                        os.unlink(staging, dir_fd=directory_fd)
+                        os.fsync(directory_fd)
+            self._check_files(directory_fd)
+            before = os.stat(self.DB_NAME, dir_fd=directory_fd, follow_symlinks=False)
+            # Anchor SQLite's path to the already opened directory on Linux.
+            # Only SQLite opens the published DB. Metadata checks detect observed
+            # replacement, not an adversarial same-UID swap-and-restore race.
+            uri = f"file:/proc/self/fd/{directory_fd}/{self.DB_NAME}?mode=rw"
+            db = sqlite3.connect(uri, uri=True, timeout=self.timeout, isolation_level=None)
+            current = os.stat(self.DB_NAME, dir_fd=directory_fd, follow_symlinks=False)
+            self._check_stat(current)
+            if (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino):
+                raise UndoHistoryError("History path changed during open")
+            if db.execute("PRAGMA journal_mode").fetchone()[0] != "delete":
+                raise UndoHistoryError("Unsupported history journal mode")
+            db.execute("PRAGMA synchronous=EXTRA")
+            db.execute("PRAGMA foreign_keys=ON")
+            db.execute("PRAGMA trusted_schema=OFF")
+            if (db.execute("PRAGMA synchronous").fetchone()[0] != 3
+                    or db.execute("PRAGMA foreign_keys").fetchone()[0] != 1
+                    or db.execute("PRAGMA trusted_schema").fetchone()[0] != 0):
+                raise UndoHistoryError("Required SQLite safety settings unavailable")
+            if created:
+                with self._transaction(db):
+                    for statement in self.SCHEMA:
+                        db.execute(statement)
+                    db.execute(f"PRAGMA application_id={self.APPLICATION_ID}")
+                    db.execute(f"PRAGMA user_version={self.VERSION}")
+            self._check_schema(db)
+            self._check_files(directory_fd)
+            yield db
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            raise UndoHistoryError(f"History storage unavailable: {exc}") from exc
+        finally:
+            if db is not None:
+                db.close()
+            if directory_fd is not None:
+                os.close(directory_fd)
+
+    @staticmethod
+    @contextmanager
+    def _transaction(db):
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+            db.execute("COMMIT")
+        except BaseException:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise
+
+    def _event(self, db, record_id, attempt_id, state, reason):
+        db.execute("""INSERT INTO undo_events
+            (event_id,record_id,attempt_id,state,reason,created_at) VALUES (?,?,?,?,?,?)""",
+                   (str(uuid.uuid4()), record_id, attempt_id, state, reason, self._now()))
+
+    def create(self, entry):
+        """Persist one new available reversal and its audit event, or raise."""
+        try:
+            build_undo_argv(entry, self.manager)  # Increment 2 boundary is unchanged.
+        except ValueError as exc:
+            raise UndoHistoryError(f"Invalid structured undo operation: {exc}") from exc
+        operation = json.dumps({"schema_version": 2, "undo": entry["undo"]}, sort_keys=True)
+        metadata = normalize_undo_record(entry)
+        metadata = json.dumps({key: metadata[key] for key in UNDO_METADATA_FIELDS}, sort_keys=True)
+        if len((operation + metadata).encode("utf-8")) > MAX_UNDO_LINE_BYTES:
+            raise UndoHistoryError("History record too large")
+        record_id, now = str(uuid.uuid4()), self._now()
+        with self._connection() as db, self._transaction(db):
+            db.execute("""INSERT INTO undo_records
+                (record_id,operation_json,metadata_json,state,created_at,updated_at)
+                VALUES (?,?,?,'available',?,?)""", (record_id, operation, metadata, now, now))
+            self._event(db, record_id, None, "available", "recorded")
+        return record_id
+
+    def _decode(self, row):
+        record_id, seq, operation, metadata, state, attempt = row
+        self._id(record_id)
+        if state not in ("available", "pending", "completed", "failed", "outcome-unknown"):
+            raise UndoHistoryError("Invalid persisted history state")
+        if (state == "available") != (attempt is None):
+            raise UndoHistoryError("Invalid persisted history attempt")
+        if attempt is not None:
+            self._id(attempt)
+        value = json.loads(operation)
+        build_undo_argv(value, self.manager)
+        display = normalize_undo_record(json.loads(metadata))
+        if display is None:
+            raise UndoHistoryError("Invalid persisted history metadata")
+        return {**display, **value, "record_id": record_id, "seq": seq,
+                "state": state, "attempt_id": attempt}
+
+    def get(self, record_id):
+        self._id(record_id)
+        with self._connection() as db:
+            row = db.execute("""SELECT record_id,seq,operation_json,metadata_json,state,
+                active_attempt FROM undo_records WHERE record_id=?""", (record_id,)).fetchone()
+            if row is None:
+                raise UndoHistoryError("Unknown history record")
+            return self._decode(row)
+
+    def claim(self, record_id):
+        """Return an authorized-shape claim only after its pending commit succeeds.
+
+        This is storage authorization, not user/sudo authorization. The GUI must
+        still confirm the freshly loaded operation and check it against its preview.
+        """
+        self._id(record_id)
+        attempt_id = str(uuid.uuid4())
+        with self._connection() as db, self._transaction(db):
+            row = db.execute("""SELECT record_id,seq,operation_json,metadata_json,state,
+                active_attempt FROM undo_records WHERE record_id=?""", (record_id,)).fetchone()
+            if row is None:
+                raise UndoHistoryError("Unknown history record")
+            current = self._decode(row)
+            argv = build_undo_argv(current, self.manager)
+            changed = db.execute("""UPDATE undo_records SET state='pending',
+                active_attempt=?,updated_at=? WHERE record_id=? AND state='available'""",
+                                 (attempt_id, self._now(), record_id)).rowcount
+            if changed != 1:
+                raise UndoHistoryError("Undo already claimed or no longer available")
+            self._event(db, record_id, attempt_id, "pending", "claimed")
+        return {"record_id": record_id, "attempt_id": attempt_id, "argv": argv}
+
+    def finish(self, record_id, attempt_id, outcome, reason):
+        """Persist one terminal outcome; never reactivate a failed/completed ID."""
+        self._id(record_id)
+        self._id(attempt_id)
+        reasons = {"completed": {"exit_zero"},
+                   "failed": {"nonzero_exit", "missing_executable", "exception"},
+                   "outcome-unknown": {"interrupted", "timeout", "dispatch_uncertain"}}
+        if type(outcome) is not str or outcome not in reasons or type(reason) is not str or reason not in reasons[outcome]:
+            raise UndoHistoryError("Invalid history outcome")
+        with self._connection() as db, self._transaction(db):
+            changed = db.execute("""UPDATE undo_records SET state=?,updated_at=?
+                WHERE record_id=? AND state='pending' AND active_attempt=?""",
+                                 (outcome, self._now(), record_id, attempt_id)).rowcount
+            if changed != 1:
+                raise UndoHistoryError("Stale attempt or invalid history transition")
+            self._event(db, record_id, attempt_id, outcome, reason)
+
+    def page(self, limit=200, before_seq=None, view="all"):
+        """Keyset paging: current states are resolved before the display limit."""
+        if type(limit) is not int or not 1 <= limit <= self.PAGE_SIZE:
+            raise UndoHistoryError("History page size must be between 1 and 200")
+        if before_seq is not None and (type(before_seq) is not int or before_seq < 1):
+            raise UndoHistoryError("Invalid history cursor")
+        if type(view) is not str or view not in ("all", "actionable", "history"):
+            raise UndoHistoryError("Invalid history view")
+        where = {"all": "1", "actionable": "state='available'",
+                 "history": "state!='available'"}[view]
+        parameters = []
+        if before_seq is not None:
+            where += " AND seq < ?"
+            parameters.append(before_seq)
+        parameters.append(limit)
+        with self._connection() as db:
+            rows = db.execute("""SELECT record_id,seq,operation_json,metadata_json,state,
+                active_attempt FROM undo_records WHERE """ + where + " ORDER BY seq DESC LIMIT ?",
+                              parameters).fetchall()
+            return [self._decode(row) for row in rows]
+
+    def events(self, record_id, limit=200, before_seq=None):
+        """Return bounded audit events; no update/delete API exists."""
+        self._id(record_id)
+        if type(limit) is not int or not 1 <= limit <= self.PAGE_SIZE:
+            raise UndoHistoryError("Invalid event page size")
+        if before_seq is not None and (type(before_seq) is not int or before_seq < 1):
+            raise UndoHistoryError("Invalid event cursor")
+        with self._connection() as db:
+            rows = db.execute("""SELECT seq,event_id,attempt_id,state,reason,created_at
+                FROM undo_events WHERE record_id=? AND seq < ? ORDER BY seq DESC LIMIT ?""",
+                              (record_id, before_seq if before_seq is not None else 9223372036854775807,
+                               limit)).fetchall()
+            return [dict(zip(("seq", "event_id", "attempt_id", "state", "reason", "created_at"), row))
+                    for row in rows]
+
 
 # ── Worker thread classes ─────────────────────────────────────────────────────
 # All shell commands run in background threads so the GUI never freezes.
@@ -1404,6 +1777,7 @@ class CommandWorker(QThread):
         self.timeout  = timeout   # Seconds before giving up
         self.env      = env       # Optional env dict; None = inherit from parent process
         self.password = password  # sudo password for -S mode (bytes or None)
+        self.failure_reason = None  # Machine-readable outcome for durable undo history.
 
     def run(self):
         """This runs in a background thread — never touch the GUI from here."""
@@ -1469,20 +1843,24 @@ class CommandWorker(QThread):
             else:
                 if not stderr:
                     self.error_ready.emit(f"Command failed with exit code {p.returncode}.")
+                self.failure_reason = "nonzero_exit"
                 self.failed.emit()
 
         except subprocess.TimeoutExpired:
             self.error_ready.emit(f"Command timed out after {self.timeout} seconds.")
+            self.failure_reason = "timeout"
             self.failed.emit()
 
         except FileNotFoundError:
             # The command itself doesn't exist on this system
             self.error_ready.emit(f"Command not found: {self.cmd[0]}")
+            self.failure_reason = "missing_executable"
             self.failed.emit()
 
         except Exception as e:
             logging.error(f"CommandWorker error: {e}")
             self.error_ready.emit(str(e))
+            self.failure_reason = "exception"
             self.failed.emit()
 
 
@@ -2732,18 +3110,23 @@ class FindingsTable(QWidget, WorkerMixin):
             success = True
 
         if success:
-            # Save to undo log
-            UNDO_LOG.append(entry)
-            save_undo_entry(entry)
-            # Track in session summary
             SESSION.log_action(entry["action"], name, succeeded=True)
-            # Notify the undo panel if it is open
+            # Never offer memory-only undo when the durable store is unavailable.
             app = QApplication.instance()
-            if hasattr(app, "undo_panel_ref") and app.undo_panel_ref:
+            panel = getattr(app, "undo_panel_ref", None)
+            if entry.get("undo") is None:
+                self.terminal.append_warn("Remediation succeeded; no supported automatic undo is available.")
+            elif panel is None:
+                self.terminal.append_err("Remediation succeeded, but undo history is unavailable. No automatic undo was saved.")
+            else:
                 try:
-                    app.undo_panel_ref.add_live_entry(entry)
-                except Exception as e:
-                    logging.error(f"Undo panel update failed: {e}")
+                    saved = panel.record_remediation(entry)
+                    UNDO_LOG.append(saved)  # Session reporting, not execution authority.
+                except (UndoHistoryError, ValueError) as e:
+                    self.terminal.append_err(
+                        f"Remediation succeeded, but undo history could not be confirmed saved: {e}. "
+                        "Check persistent history before taking further action."
+                    )
 
     def _remove_finding_and_update_score(self, name, risk):
         """Remove a finding row from the table and reduce the risk score."""
@@ -5071,6 +5454,17 @@ class UndoPanel(QWidget, WorkerMixin):
         super().__init__()
         self._init_workers()
         self.terminal = terminal
+        self.history_store = None
+        self._inflight = set()
+        self._history_view = "actionable"
+        self._history_cursor = None
+        self._history_cursors = []
+        self._next_cursor = None
+        self._store_error = None
+        try:
+            self.history_store = UndoHistoryStore()
+        except UndoHistoryError as e:
+            self._store_error = str(e)  # Preserve corrupt/unsupported files; no fallback.
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -5084,20 +5478,41 @@ class UndoPanel(QWidget, WorkerMixin):
         layout.addLayout(hdr_row)
 
         info = QLabel(
-            "Everything this app has done to your system is listed here. "
-            "Click any row to see the full risk explanation. "
-            "Click UNDO to reverse an action.\n"
-            "Actions from previous sessions are shown in grey."
+            "Available reversals are separate from audit and legacy history. "
+            "Completed, failed and uncertain attempts cannot be retried automatically. "
+            "Pending after restart means the outcome is uncertain. "
+            "Select a row for its ID and safety details."
         )
         info.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
         info.setWordWrap(True)
         layout.addWidget(info)
 
+        navigation = QHBoxLayout()
+        self.history_view = QComboBox()
+        for label, value in (("Actionable", "actionable"), ("Audit history", "history"),
+                             ("Legacy history (read-only)", "legacy")):
+            self.history_view.addItem(label, value)
+        navigation.addWidget(self.history_view)
+        self.history_previous = QPushButton("Previous")
+        self.history_next = QPushButton("Next")
+        self.history_refresh = QPushButton("Refresh")
+        navigation.addWidget(self.history_previous)
+        navigation.addWidget(self.history_next)
+        navigation.addWidget(self.history_refresh)
+        layout.addLayout(navigation)
+        self.history_status = QLabel()
+        self.history_status.setWordWrap(True)
+        layout.addWidget(self.history_status)
+        self.history_view.currentIndexChanged.connect(self._change_history_view)
+        self.history_previous.clicked.connect(self._previous_history_page)
+        self.history_next.clicked.connect(self._next_history_page)
+        self.history_refresh.clicked.connect(lambda: self._reload_history(reset=True))
+
         # The undo table
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(
-            ["DATE & TIME", "ACTION TAKEN", "COMMAND RAN", "RISK LEVEL", "UNDO"]
+            ["DATE & TIME", "ACTION TAKEN", "RECORDED COMMAND", "STATE / RISK", "UNDO"]
         )
         hh = self.table.horizontalHeader()
         for col in range(5):
@@ -5145,21 +5560,87 @@ class UndoPanel(QWidget, WorkerMixin):
         self.empty_label.setVisible(empty)
         self.table.setVisible(not empty)
 
+    def _history_error(self, message):
+        self.history_status.setText(message)
+        self.terminal.append_err(message)
+
     def _load_previous_sessions(self):
-        """Load undo entries from previous sessions (from disk)."""
-        for entry in load_undo_log():
-            self._add_row(entry, from_prev_session=True)
+        self._reload_history(reset=True)
+
+    def _change_history_view(self, _index):
+        self._history_view = self.history_view.currentData()
+        self._reload_history(reset=True)
+
+    def _next_history_page(self):
+        if self._next_cursor is not None:
+            self._history_cursors.append(self._history_cursor)
+            self._history_cursor = self._next_cursor
+            self._reload_history()
+
+    def _previous_history_page(self):
+        if self._history_cursors:
+            self._history_cursor = self._history_cursors.pop()
+            self._reload_history()
+
+    def _reload_history(self, reset=False):
+        if reset:
+            self._history_cursor = None
+            self._history_cursors = []
+        self.table.setRowCount(0)
+        self.detail.clear()
+        self._next_cursor = None
+        self.history_next.setEnabled(False)
+        self.history_previous.setEnabled(bool(self._history_cursors))
+        try:
+            if self._history_view == "legacy":
+                offset = self._history_cursor or 0
+                entries = load_undo_log(limit=200, offset=offset, strict=True)
+                # Neither old free-form nor old structured records have trustworthy outcomes.
+                entries = [{**value, "state": "legacy", "record_id": None,
+                            "legacy_id": f"legacy:{offset + index}"}
+                           for index, value in enumerate(entries)]
+                if len(entries) == 200:
+                    self._next_cursor = offset + 200
+            else:
+                if self.history_store is None:
+                    raise UndoHistoryError(self._store_error or "Undo store unavailable")
+                entries = self.history_store.page(limit=200, before_seq=self._history_cursor,
+                                                  view=self._history_view)
+                if len(entries) == 200:
+                    self._next_cursor = entries[-1]["seq"]
+            for value in entries:
+                self._add_row(value, from_prev_session=True)
+            self.history_next.setEnabled(self._next_cursor is not None)
+            suffix = " Legacy input is read-only and limited to the first 8 MiB." if self._history_view == "legacy" else ""
+            self.history_status.setText(f"Showing {len(entries)} records (maximum 200 per page)." + suffix)
+        except (UndoHistoryError, ValueError) as e:
+            self.table.setRowCount(0)
+            self._history_error(f"Cannot load undo history: {e}. Automatic undo is unavailable in this view.")
+        self._update_empty_state()
+
+    def record_remediation(self, entry):
+        if self.history_store is None:
+            raise UndoHistoryError(self._store_error or "Undo store unavailable")
+        record_id = self.history_store.create(entry)
+        saved = self.history_store.get(record_id)
+        self.add_live_entry(saved)
+        return saved
 
     def add_live_entry(self, entry):
-        """Add a new entry from the current session — live update."""
-        self._add_row(entry, from_prev_session=False)
+        # Reload rather than accumulate widgets beyond the page limit.
+        self._reload_history(reset=True)
 
     def _add_row(self, entry, from_prev_session=False):
         """Add one row to the undo table."""
+        if type(entry) is not dict:
+            return
+        identity = {key: entry.get(key) for key in ("record_id", "state", "attempt_id", "legacy_id")}
         entry = normalize_undo_record(entry)
         if entry is None:
             return
+        entry.update(identity)
         info = undo_presentation(entry, PKG_MGR)
+        state = entry.get("state") or "legacy"
         row = self.table.rowCount()
         self.table.insertRow(row)
 
@@ -5186,7 +5667,7 @@ class UndoPanel(QWidget, WorkerMixin):
             time_text,
             entry.get("action", ""),
             entry.get("cmd", ""),
-            risk_display,
+            ("pending / uncertain" if state == "pending" else state) + " / " + risk_display,
         ]):
             item = QTableWidgetItem(val)
             if col == 3:
@@ -5207,7 +5688,8 @@ class UndoPanel(QWidget, WorkerMixin):
         bl.setContentsMargins(2, 2, 2, 2)
         bl.setSpacing(0)
 
-        if info["argv"] is not None:
+        if (state == "available" and type(entry.get("record_id")) is str
+                and entry["record_id"] not in self._inflight and info["argv"] is not None):
             is_high = risk_level == "HIGH"
             ub = QPushButton("⚠  UNDO" if is_high else "↩  UNDO")
             ub.setObjectName("danger" if is_high else "warn")
@@ -5220,7 +5702,7 @@ class UndoPanel(QWidget, WorkerMixin):
             ub.clicked.connect(lambda _, e=entry: self._run_undo(e))
             bl.addWidget(ub)
         else:
-            nl = QLabel("Undo unavailable")
+            nl = QLabel("Historical / unavailable")
             nl.setToolTip(info["preview"])
             nl.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs(-2)}px;")
             bl.addWidget(nl)
@@ -5241,6 +5723,8 @@ class UndoPanel(QWidget, WorkerMixin):
 
         info = undo_presentation(entry, PKG_MGR)
         lines = [
+            f"RECORD ID: {entry.get('record_id') or entry.get('legacy_id', 'legacy')}",
+            f"STATE: {entry.get('state', 'legacy')} (pending means outcome uncertain)",
             f"RECORDED ACTION (unverified): {entry.get('action', '')}",
             f"RECORDED COMMAND (not executed): {entry.get('cmd', '')}",
             f"GENERATED UNDO: {info['preview']}",
@@ -5251,76 +5735,98 @@ class UndoPanel(QWidget, WorkerMixin):
         self.detail.setPlainText("\n".join(lines))
 
     def _run_undo(self, entry):
-        """Execute only a revalidated operation, never a stored command string."""
-        info = undo_presentation(entry, PKG_MGR)
-        if info["argv"] is None:
-            self.terminal.append_warn(info["preview"])
+        """Confirm fresh stored data, durably claim its ID, then dispatch once."""
+        record_id = entry.get("record_id") if type(entry) is dict else None
+        if type(record_id) is not str or not record_id or self.history_store is None:
+            self._history_error("No actionable persisted record. Legacy history cannot execute.")
             return
-        # Freeze the previewed argv, not a mutable reference to the input record.
-        approved_argv = list(info["argv"])
-        if QMessageBox.question(
-            self, "Confirm Rollback",
-            f"Run: {info['preview']}\n\n{info['does']}\n\n"
-            f"HIGH RISK: {info['risk']}\n\n{info['exploit']}",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        ) != QMessageBox.StandardButton.Yes:
+        if record_id in self._inflight:
+            self.terminal.append_warn("This undo is already being authorized or executed.")
             return
-        # Dialogs run nested event loops: reject an operation changed meanwhile.
+        self._inflight.add(record_id)  # Includes nested confirmation/password dialogs.
+        claim, dispatched = None, False
         try:
-            if build_undo_argv(entry, PKG_MGR) != approved_argv:
-                raise ValueError("Undo operation changed after confirmation")
-        except ValueError:
-            self.terminal.append_warn("Undo operation changed or became invalid; nothing was executed.")
-            return
-        sudo_password = prompt_for_sudo_password(
-            self, "Rolling back this action requires your sudo (administrator) password.",
-            terminal=self.terminal,
-        )
-        if sudo_password is None:
-            return
+            current = self.history_store.get(record_id)
+            if current["state"] != "available":
+                raise UndoHistoryError("Record is no longer available; no automatic retry")
+            info = undo_presentation(current, PKG_MGR)
+            if info["argv"] is None:
+                raise UndoHistoryError("Invalid structured undo operation")
+            approved = list(info["argv"])
+            if QMessageBox.question(
+                self, "Confirm Rollback",
+                f"Run: {info['preview']}\n\n{info['does']}\n\n"
+                f"HIGH RISK: {info['risk']}\n\n{info['exploit']}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            ) != QMessageBox.StandardButton.Yes:
+                return
+            fresh = self.history_store.get(record_id)
+            if fresh["state"] != "available" or build_undo_argv(fresh, PKG_MGR) != approved:
+                raise UndoHistoryError("Undo changed after confirmation")
+            password = prompt_for_sudo_password(
+                self, "Rolling back this action requires your sudo (administrator) password.",
+                terminal=self.terminal)
+            if password is None:
+                return
+            claim = self.history_store.claim(record_id)  # Must commit before constructing worker.
+            fresh = self.history_store.get(record_id)
+            if (fresh["state"] != "pending" or fresh["attempt_id"] != claim["attempt_id"]
+                    or build_undo_argv(fresh, PKG_MGR) != approved or claim["argv"] != approved):
+                raise UndoHistoryError("Claimed undo differs from the confirmed operation")
+            self._reload_history()  # Pending is durable before changing the view.
+            self.terminal.append_cmd(info["preview"])
+            worker = CommandWorker(approved, sudo=True, password=password)
+            worker.output_ready.connect(lambda text: self.terminal.append(text, T["OK"]))
+            worker.error_ready.connect(self.terminal.append_err)
+            worker.finished_ok.connect(lambda: self._finish_undo(
+                record_id, claim["attempt_id"], "completed", "exit_zero"))
+            worker.failed.connect(lambda: self._undo_worker_failed(record_id, claim["attempt_id"], worker))
+            dispatched = True
+            self._start_worker(worker)
+        except Exception as e:
+            # Construction/start may fail after claim, or dispatch may be uncertain.
+            if claim is not None:
+                try:
+                    self.history_store.finish(record_id, claim["attempt_id"],
+                                              "outcome-unknown", "dispatch_uncertain")
+                except UndoHistoryError:
+                    pass  # Durable pending remains non-actionable; never fall back.
+            self._inflight.discard(record_id)
+            self._reload_history()
+            self._history_error(f"Undo could not be safely dispatched: {e}. Check history; do not retry automatically.")
+        finally:
+            if not dispatched:
+                self._inflight.discard(record_id)
+
+    def _undo_worker_failed(self, record_id, attempt_id, worker):
+        reason = worker.failure_reason
+        if reason in ("nonzero_exit", "missing_executable"):
+            self._finish_undo(record_id, attempt_id, "failed", reason)
+        else:
+            self._finish_undo(record_id, attempt_id, "outcome-unknown",
+                              "timeout" if reason == "timeout" else "dispatch_uncertain")
+
+    def _finish_undo(self, record_id, attempt_id, outcome, reason):
+        """Persist outcome/audit first. Never delete the historical record."""
         try:
-            if build_undo_argv(entry, PKG_MGR) != approved_argv:
-                raise ValueError("Undo operation changed during authentication")
-        except ValueError:
-            self.terminal.append_warn("Undo operation changed or became invalid; nothing was executed.")
-            return
-        self.terminal.append_cmd(info["preview"])
-        w = CommandWorker(approved_argv, sudo=True, password=sudo_password)
-        w.output_ready.connect(lambda t: self.terminal.append(t, T["OK"]))
-        w.error_ready.connect(self.terminal.append_err)
-        w.finished_ok.connect(lambda: self._remove_undo_entry_after_rollback(entry))
-        self._start_worker(w)
-
-    def _remove_undo_entry_after_rollback(self, entry):
-        """Remove the row from the undo table after a successful rollback."""
-        self.terminal.append_ok(f"Rollback complete: {entry['action']}")
-
-        # Keep in-memory list in sync with the table.
-        for i in range(len(UNDO_LOG) - 1, -1, -1):
-            e = UNDO_LOG[i]
-            if (
-                e.get("time") == entry.get("time")
-                and e.get("action") == entry.get("action")
-                and e.get("cmd") == entry.get("cmd")
-                and e.get("undo_cmd") == entry.get("undo_cmd")
-            ):
-                UNDO_LOG.pop(i)
-                break
-
-        # Find and remove the matching row
-        for r in range(self.table.rowCount() - 1, -1, -1):
-            item = self.table.item(r, 0)
-            if item:
-                stored = item.data(Qt.ItemDataRole.UserRole)
-                if (
-                    stored
-                    and stored.get("time") == entry.get("time")
-                    and stored.get("action") == entry.get("action")
-                    and stored.get("cmd") == entry.get("cmd")
-                    and stored.get("undo_cmd") == entry.get("undo_cmd")
-                ):
-                    self.table.removeRow(r)
+            self.history_store.finish(record_id, attempt_id, outcome, reason)
+            saved = self.history_store.get(record_id)
+            for index, value in enumerate(UNDO_LOG):
+                if value.get("record_id") == record_id:
+                    UNDO_LOG[index] = saved
                     break
+            self._reload_history()
+            if outcome == "completed":
+                self.terminal.append_ok("Undo command succeeded; completion is saved in audit history.")
+            else:
+                self.terminal.append_warn(f"Undo outcome saved as {outcome}; partial changes are possible. No automatic retry.")
+        except UndoHistoryError as e:
+            self._reload_history()
+            self._history_error(
+                f"Undo command ended, but its outcome could not be confirmed saved: {e}. "
+                "History may remain pending/uncertain. Do not retry automatically.")
+        finally:
+            self._inflight.discard(record_id)
 
 # ── Left sidebar navigation ───────────────────────────────────────────────────
 class SideBar(QWidget, WorkerMixin):
