@@ -129,3 +129,27 @@ collector specifically; real selector behavior is tested separately here.
 remain unconfirmed, without requesting privileges or performing real signals.
 Timing tests allow scheduling slack and do not prove hard real-time deadlines or
 cleanup of root-owned processes. Run with the same `python3 -B` discovery command.
+
+## Increment 4 Stage 4C assessment sequencing
+
+`tests/test_assessment_sequence.py` binds production sidebar orchestration,
+CvePanel adapters and WorkerMixin methods to lightweight widget doubles. Controlled
+worker signals test real signal connections and their order without commands,
+network calls or elapsed-time sleeps. Coverage includes all seven steps, delayed
+CVE/update thread completion, synchronous/duplicate/stale callbacks, repeated runs,
+missing tools/targets, offline checks, cancellation acknowledgement, parser and
+summary exceptions, unknown worker exits, control restoration, preserved findings,
+exactly-once summary and absence of timer chains/privileged additions. Buffered
+worker threads/outcomes remain covered by Increment 1 tests. No full GUI is run.
+
+### Stage 4C dispatch-exception regression
+
+Fault injection covers CVE bookkeeping before dispatch and errors after startup
+for sidebar commands, CVE and updates. It verifies no next step, summary or control
+restoration while the required worker is active; post-dispatch errors remain in
+step outcomes. Additional cases cover pre-start refusal, fast exited threads whose
+finished notification is queued, inline finish followed by setup failure, exceptions
+after an adapter's dispatch call, outcome-calculation failure and duplicate/late
+notifications. Four focused regressions failed against the rejected implementation
+before the correction. Controlled worker signals execute no commands or network
+requests; they model callback ordering rather than launching the full GUI.

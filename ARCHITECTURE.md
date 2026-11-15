@@ -102,7 +102,7 @@ Other component line ranges below reflect the earlier review baseline.
 | `ScheduleScanDialog(QDialog)` | [4548-4716](linux-security-dashboard.py#L4548-L4716) | User-crontab installer for periodic upgradable-package check |
 | `ToolsPanel(QWidget)` | [4719-4891](linux-security-dashboard.py#L4719-L4891) | Category-tabbed grid of tool cards + the schedule card |
 | `UndoPanel(QWidget, WorkerMixin)` | [4894-5153](linux-security-dashboard.py#L4894-L5153) | Persistent rollback log table with HIGH-risk warning UI |
-| `SideBar(QWidget, WorkerMixin)` | [5156-5842](linux-security-dashboard.py#L5156-L5842) | Collapsible nav + every scan handler + RUN-EVERYTHING queue (`_re_tick`) |
+| `SideBar(QWidget, WorkerMixin)` | [5156-5842](linux-security-dashboard.py#L5156-L5842) | Collapsible nav + every scan handler + RUN-EVERYTHING completion-driven sequence |
 | `ProfileDialog(QDialog)` | [5846-5897](linux-security-dashboard.py#L5846-L5897) | Confirm/override auto-detected profile |
 | `StartupWizard(QDialog)` | [5900-6119](linux-security-dashboard.py#L5900-L6119) | First-run 4-page onboarding (mode / connectivity / profile / summary) |
 | `SessionSummaryDialog(QDialog)` | [6123-6157](linux-security-dashboard.py#L6123-L6157) | Toolbar "What's Been Done?" recap |
@@ -139,7 +139,7 @@ Other component line ranges below reflect the earlier review baseline.
   │           │ pre_scan()     │   (dedupe/sort)   │                │ (quick,  │
   │ run_*() ──┼──── argv ──►  ┌┴───────────────────┴┐               │  temps,  │
   │           │ ◄── result ── │  CommandWorker /    │ ── stdout ──► │  drives, │
-  │ _re_tick  │               │  StreamingWorker /  │               │  unused, │
+  │ run steps │               │  StreamingWorker /  │               │  unused, │
   │ queue     │               │  HttpWorker         │               │  network,│
   └─────┬─────┘               └──────────┬──────────┘               │  service)│
         │                                │                          └──────────┘
@@ -169,7 +169,35 @@ Other component line ranges below reflect the earlier review baseline.
   must clear cve_table before populating — see service_communication_patterns.md.
 ```
 
-RUN EVERYTHING (`SideBar.run_everything()` → `_re_tick()`, [5730-5789](linux-security-dashboard.py#L5730-L5789)) is a polled queue: each tick waits for `_any_running` to clear, runs the next step's `fn()`, then re-arms via `QTimer.singleShot(500, _re_tick)`. The final tick fires `on_complete` → `RunEverythingSummaryDialog`.
+RUN EVERYTHING (`SideBar.run_everything()` → `_re_advance`) uses an in-memory
+UUID run identity and a single waiting-step index. The seven steps remain unused
+software, ports, services, quick checks, temperatures, CVEs and updates. Sidebar
+command workers and CvePanel HTTP/update workers deliver a run-local terminal
+callback only on `QThread.finished`, after their logical outcome and parsing.
+Synchronous functions acknowledge return; missing dependencies/offline CVE checks
+acknowledge a skip. A step is consumed once; duplicate/stale callbacks cannot
+advance another step/run. There is no polling timer. Finalization consumes the
+summary callback once after all seven outcomes, with no waiting step.
+
+The run preserves main findings and terminal evidence. It refuses to begin while
+existing sidebar/CVE/Lynis workers are active, rejects repeated requests, and
+temporarily disables sidebar/CVE controls. A CvePanel ownership token also rejects
+conflicting programmatic scan starts. Controls and ownership are restored before
+the summary callback. Existing CVE/update detail-table replacement is unchanged.
+CVE session bookkeeping runs before dispatch. `_start_assessment_worker` connects
+its terminal acknowledgement before startup and distinguishes pre-dispatch errors
+from exceptions after a worker starts (including a fast exit with queued signals).
+A run-local acknowledgement token retains post-dispatch errors even if the step
+adapter raises after startup returns. Running workers still acknowledge only on
+`finished`; errors are retained in the final step record. Inline completion is
+held until the startup call returns, so setup errors cannot become false success.
+No timer, termination or coverage-state redesign is introduced.
+
+Per-step outcomes are retained in `_re_run["outcomes"]` for later coverage work;
+`completed` for synchronous helpers means normal return, not verified full coverage.
+Comprehensive clean/partial/unknown verdicts and general panel overlap remain
+Stages 4D/4E. Lynis and drive checks remain outside RUN EVERYTHING.
+
 
 ---
 
@@ -301,7 +329,8 @@ TerminalPanel FindingsTable LynisPanel      CvePanel         ToolsPanel       Un
                                           └── T / LANG / BASE_FS / PKG_MGR
 ```
 
-`SideBar` orchestrates: it owns references to **all** panels and the `QStackedWidget`, drives `_pre_scan` (clears findings + terminal + cancels in-flight CVE), and runs the `_re_tick` queue.
+`SideBar` orchestrates: it owns references to **all** panels and the `QStackedWidget`, drives `_pre_scan` (clears findings + terminal + cancels in-flight CVE), and runs the completion-driven assessment. RUN EVERYTHING bypasses the clearing
+`_pre_scan` path to preserve existing findings and evidence.
 
 `AuditDashboard` monkey-patches `QApplication.instance().undo_panel_ref = undo_panel` ([6850](linux-security-dashboard.py#L6850)) so `FindingsTable._verify` can post live entries from the table without holding a panel reference. See [R-003](CODE_REVIEW.md#r-003).
 

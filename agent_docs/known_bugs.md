@@ -19,6 +19,17 @@ Audit date: **2026-04-23**
   `full_output` after any failure is diagnostic material, not complete evidence.
 
 
+### Assessment coverage and general overlap (Stages 4D/4E)
+- Stage 4C records seven run-scoped terminal outcomes, but synchronous helper
+  `completed` means returned normally; helpers may still swallow probe failures.
+  The existing score/summary does not comprehensively represent missing coverage.
+- RUN EVERYTHING preserves main findings; previous observations are not proof of
+  current state. CVE and updates retain the shared detail-table convention.
+- Only minimum run-owned scan controls are locked. General stale/overlapping panel
+  results and comprehensive assessment verdicts remain later-stage work.
+- The orchestrator waits for actual worker completion; it does not add a watchdog
+  that could falsely claim a still-running HTTP or command worker is finished.
+
 ## Regression guards (previously fixed — don't regress)
 
 ### Quick-check parsing
@@ -76,3 +87,19 @@ Audit date: **2026-04-23**
 - **`smartctl` is invoked with `-H` only — never `-t`.** `-t` instructs the drive firmware to run destructive/long self-tests and must never be called without explicit user opt-in.
 - Drive names from `lsblk` are validated with `^[a-zA-Z0-9]+$` before being composed into `/dev/<name>` argv — defence in depth even though argv avoids shell interpolation.
 - Timeshift snapshot failure ABORTS the pending action. Never swallow the failure and let the destructive command run anyway.
+
+### RUN EVERYTHING sequencing (Increment 4 Stage 4C)
+- Preserve the seven non-sudo steps; never silently add Lynis or drive checks.
+- Use per-run UUID and expected step index; set waiting before starting a step.
+- Advance workers on actual thread completion, not logical success or timers.
+- Reject duplicate starts/callbacks and old run IDs. Consume final summary once.
+- Missing dependencies, exceptions, cancellation and unknown exits must acknowledge
+  terminal outcomes. Restore controls and release panel ownership at finalization.
+- CVE bookkeeping must precede worker dispatch. Never convert a start/setup
+  exception to immediate completion if a worker has started. Assessment dispatch
+  acknowledgements retain errors and wait for actual thread completion, including
+  fast exits with queued slots and inline completion during startup.
+- Pre-dispatch errors can advance safely; post-dispatch errors remain in the final
+  step record. Duplicate/late callbacks cannot consume that step again.
+- Regression coverage: `tests/test_assessment_sequence.py` uses production scan
+  adapters and controlled signals without launching GUI/commands/network calls.

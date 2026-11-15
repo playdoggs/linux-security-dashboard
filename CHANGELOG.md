@@ -5,6 +5,16 @@ All notable changes to Linux Security Dashboard are documented here.
 ## [Unreleased] — v4.2.1
 
 ### Changed
+- Increment 4 Stage 4C: replace RUN EVERYTHING timer polling with seven explicit
+  completion-driven steps. UUID run/step guards reject duplicate and stale
+  callbacks; CVE/update worker thread completion gates progression. Record terminal
+  outcomes, preserve existing findings, reject repeated starts and temporarily
+  lock conflicting controls. Final summary fires once after all seven outcomes.
+  Coverage verdicts and general panel overlap remain Stages 4D/4E.
+  Acceptance correction: move CVE logging before dispatch and retain asynchronous
+  completion ownership across post-start/setup exceptions. Record the error while
+  waiting for the actual worker end; cover pre-start, post-start, queued/inline
+  completion and duplicate acknowledgement regressions.
 - Increment 4 Stage 4B: concurrently drain nonblocking stdout/stderr and password
   input under one monotonic execution deadline, including inherited open pipes.
   Cap captured output at 2 MiB and live updates at 4096; incomplete evidence fails

@@ -2144,6 +2144,53 @@ class WorkerMixin:
         worker.start()
         return worker
 
+    def _start_assessment_worker(self, worker, outcome, on_terminal):
+        """A start/setup exception cannot stand in for an active worker's end.
+
+        Connect before dispatch; defer even synchronous finished notifications
+        until startup returns, so a post-start exception is retained in the result.
+        """
+        state = {"starting": True, "finished": False, "reported": False,
+                 "dispatched": False, "error": None}
+        # The step starter can itself raise after this helper returns. Expose
+        # its acknowledgement state to the run-local callback, not a global flag.
+        on_terminal._assessment_dispatch = state
+        def report():
+            if state["starting"] or not state["finished"] or state["reported"]:
+                return
+            state["reported"] = True
+            if state["error"] is not None:
+                on_terminal({"outcome": "failed", "error": state["error"]})
+            else:
+                try:
+                    result = outcome()
+                except Exception as exc:
+                    result = {"outcome": "failed", "error": str(exc)}
+                on_terminal(result)
+        def finished():
+            state["finished"] = True
+            report()
+        worker.finished.connect(finished)
+        try:
+            self._start_worker(worker)
+            state["dispatched"] = True
+        except Exception as exc:
+            state["error"] = str(exc)
+            # QThread may have finished already but its queued result/finished
+            # slots still need delivery. isRunning() alone is insufficient.
+            state["dispatched"] = state["finished"] or worker.isRunning() or worker.isFinished()
+            if not state["dispatched"]:
+                self._workers.discard(worker)
+                worker.deleteLater()
+                state["finished"] = True  # Confirmed pre-dispatch failure.
+            try:
+                self.terminal.append_err(f"Assessment worker setup failed: {exc}")
+            except Exception:
+                pass  # Error is retained; logging must not bypass completion.
+        finally:
+            state["starting"] = False
+        report()
+
     def _stop_all_workers(self):
         """Stop all running workers. Call when the widget is closed."""
         for w in list(self._workers):
@@ -4732,8 +4779,14 @@ class CvePanel(QWidget, WorkerMixin):
         except Exception:
             return None
 
-    def scan_cve(self, on_complete=None):
+    def scan_cve(self, on_complete=None, on_terminal=None, assessment_id=None):
         """Find installed packages and check them against the CVE database."""
+        if (getattr(self, "_assessment_owner", None) is not None
+                and assessment_id != self._assessment_owner):
+            self.terminal.append_warn("Assessment owns the CVE/update scans; wait for completion.")
+            if on_terminal:
+                on_terminal("skipped")
+            return
         self._scan_cve_done_cb = on_complete
         self._cve_scan_serial += 1
         scan_id = self._cve_scan_serial
@@ -4747,6 +4800,8 @@ class CvePanel(QWidget, WorkerMixin):
             msg = "⚠  Requires internet — no connection detected. CVE check skipped."
             self.status.setText(msg)
             self.terminal.append_warn(msg)
+            if on_terminal:
+                on_terminal("skipped")
             if on_complete:
                 try:
                     on_complete()
@@ -4765,6 +4820,11 @@ class CvePanel(QWidget, WorkerMixin):
 
         if not targets:
             self.status.setText("No packages found to check on this system.")
+            if on_terminal:
+                on_terminal("skipped")
+            elif on_complete:
+                self._scan_cve_done_cb = None
+                on_complete()
             return
 
         self._cve_total = len(targets)
@@ -4780,12 +4840,43 @@ class CvePanel(QWidget, WorkerMixin):
         self.terminal.append_info(f"Checking {len(targets)} packages...")
 
         w = HttpWorker(targets)
-        w.result_ready.connect(
-            lambda pkg, data, sid=scan_id: self._handle_cve_result(pkg, data, sid)
-        )
-        w.finished_ok.connect(lambda sid=scan_id: self._finish_cve_scan(sid))
-        self._start_worker(w)
+        state = {"finished": False, "parse_failed": False}
+        def result(pkg, data):
+            try:
+                self._handle_cve_result(pkg, data, scan_id)
+            except Exception as exc:
+                state["parse_failed"] = True
+                self.terminal.append_err(f"CVE result could not be processed: {exc}")
+        w.result_ready.connect(result if on_terminal else
+                               lambda pkg, data, sid=scan_id: self._handle_cve_result(pkg, data, sid))
+        w.finished_ok.connect(lambda: state.update(finished=True))
+        if on_terminal:
+            def finish_summary():
+                try:
+                    self._finish_cve_scan(scan_id)
+                except Exception as exc:
+                    state["parse_failed"] = True
+                    self.terminal.append_err(f"CVE summary could not be processed: {exc}")
+            w.finished_ok.connect(finish_summary)
+        else:
+            w.finished_ok.connect(lambda sid=scan_id: self._finish_cve_scan(sid))
+        if on_terminal:
+            def terminal():
+                if scan_id != self._cve_active_scan_id:
+                    outcome = "cancelled"
+                elif not state["finished"] or state["parse_failed"]:
+                    outcome = "unknown"
+                elif self._cve_ok == self._cve_total:
+                    outcome = "succeeded"
+                else:
+                    outcome = "partial" if self._cve_ok else "failed"
+                return outcome
+        # Fallible bookkeeping must finish before any HTTP worker starts.
         SESSION.log_scan("CVE Vulnerability Check", 0)
+        if on_terminal:
+            self._start_assessment_worker(w, terminal, on_terminal)
+        else:
+            self._start_worker(w)
 
     def _handle_cve_result(self, pkg, data, scan_id):
         """Process one package's CVE results and add to the table."""
@@ -4890,9 +4981,15 @@ class CvePanel(QWidget, WorkerMixin):
             if isinstance(w, HttpWorker):
                 w.cancel()
 
-    def scan_upgrades(self, on_complete=None, on_failed=None):
+    def scan_upgrades(self, on_complete=None, on_failed=None, on_terminal=None, assessment_id=None):
         """Check which packages have newer versions available.
         Uses DEBIAN_FRONTEND=noninteractive so apt never waits for user input."""
+        if (getattr(self, "_assessment_owner", None) is not None
+                and assessment_id != self._assessment_owner):
+            self.terminal.append_warn("Assessment owns the CVE/update scans; wait for completion.")
+            if on_terminal:
+                on_terminal("skipped")
+            return
         self._scan_upgrades_done_cb = on_complete
         self._scan_upgrades_failed_cb = on_failed
         # Clear any stale rows from a previous CVE scan — this panel is shared
@@ -4916,13 +5013,26 @@ class CvePanel(QWidget, WorkerMixin):
             ["apt", "list", "--upgradable"],
             env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
         )
-        w.output_ready.connect(self._parse_upgrades)
+        outcome = {"value": "unknown", "parse_failed": False}
+        def parse(text):
+            try:
+                self._parse_upgrades(text)
+            except Exception as exc:
+                outcome["parse_failed"] = True
+                self.terminal.append_err(f"Update output could not be processed: {exc}")
+        w.output_ready.connect(parse if on_terminal else self._parse_upgrades)
         w.error_ready.connect(self.terminal.append_err)
         w.finished_ok.connect(lambda: self.status.setText("Update check complete."))
         w.failed.connect(lambda: self.status.setText("Update check failed — see terminal output."))
-        w.finished_ok.connect(self._finish_upgrades_scan)
-        w.failed.connect(lambda: self._finish_upgrades_scan(succeeded=False))
-        self._start_worker(w)
+        if on_terminal:
+            w.finished_ok.connect(lambda: outcome.update(value="succeeded"))
+            w.failed.connect(lambda: outcome.update(value="failed"))
+            self._start_assessment_worker(w, lambda:
+                "failed" if outcome["parse_failed"] else outcome["value"], on_terminal)
+        else:
+            w.finished_ok.connect(self._finish_upgrades_scan)
+            w.failed.connect(lambda: self._finish_upgrades_scan(succeeded=False))
+            self._start_worker(w)
 
     def _finish_upgrades_scan(self, succeeded=True):
         """Release callback state on either outcome, then notify the right caller."""
@@ -6225,21 +6335,35 @@ class SideBar(QWidget, WorkerMixin):
         # Switch to the findings page so the user sees results populate
         self.stack.setCurrentIndex(0)
 
-    def _run_cmd(self, cmd, label, on_output=None, show_output=True):
+    def _run_cmd(self, cmd, label, on_output=None, show_output=True, on_terminal=None):
         """Run a command in a background thread, output to terminal."""
         self.terminal.append_cmd(" ".join(cmd))
         w = CommandWorker(cmd)
         if show_output:
             w.output_ready.connect(lambda t: self.terminal.append(t))
         w.error_ready.connect(self.terminal.append_err)
+        outcome = {"value": "unknown", "parse_failed": False}
         if on_output:
-            w.output_ready.connect(on_output)
-        w.finished_ok.connect(
-            lambda: self.terminal.append_ok(f"{label} complete.")
-        )
-        w.finished_ok.connect(self._post_scan_check)
-        w.failed.connect(self._scan_failed)
-        self._start_worker(w)
+            if on_terminal:
+                def parse(text):
+                    try:
+                        on_output(text)
+                    except Exception as exc:
+                        outcome["parse_failed"] = True
+                        self.terminal.append_err(f"{label} parsing failed: {exc}")
+                w.output_ready.connect(parse)
+            else:
+                w.output_ready.connect(on_output)
+        w.finished_ok.connect(lambda: self.terminal.append_ok(f"{label} complete."))
+        if on_terminal:
+            w.finished_ok.connect(lambda: outcome.update(value="succeeded"))
+            w.failed.connect(lambda: outcome.update(value="failed"))
+            self._start_assessment_worker(w, lambda:
+                "failed" if outcome["parse_failed"] else outcome["value"], on_terminal)
+        else:
+            w.finished_ok.connect(self._post_scan_check)
+            w.failed.connect(self._scan_failed)
+            self._start_worker(w)
 
     def _scan_failed(self):
         """Clear pending UI bookkeeping without declaring the scan successful."""
@@ -6260,13 +6384,16 @@ class SideBar(QWidget, WorkerMixin):
         self._pre_scan(L("btn_unused"), "scan", "unused")
         self._do_scan_unused()
 
-    def _do_scan_unused(self):
+    def _do_scan_unused(self, on_terminal=None):
         if not shutil.which("deborphan"):
             self.terminal.append_warn(
                 "deborphan is not installed. Install with: sudo apt install deborphan"
             )
+            if on_terminal:
+                on_terminal("skipped")
             return
-        self._run_cmd(["deborphan"], "Unused software scan", self._parse_unused)
+        self._run_cmd(["deborphan"], "Unused software scan", self._parse_unused,
+                      on_terminal=on_terminal)
 
     def _parse_unused(self, text):
         """Parse deborphan output — every result is a leftover package."""
@@ -6302,8 +6429,9 @@ class SideBar(QWidget, WorkerMixin):
         self._pre_scan(L("btn_network"), "scan", "network")
         self._do_scan_network()
 
-    def _do_scan_network(self):
-        self._run_cmd(["ss", "-tunlp"], "Network port scan", self._parse_network)
+    def _do_scan_network(self, on_terminal=None):
+        self._run_cmd(["ss", "-tunlp"], "Network port scan", self._parse_network,
+                      on_terminal=on_terminal)
 
     def _parse_network(self, text):
         """Parse ss output — flag risky ports, add all to findings."""
@@ -6363,7 +6491,7 @@ class SideBar(QWidget, WorkerMixin):
         self._pre_scan(L("btn_services"), "scan", "services")
         self._do_scan_services()
 
-    def _do_scan_services(self):
+    def _do_scan_services(self, on_terminal=None):
         # List of (name, type, risk, detail, remove_cmd, disable_cmd)
         RISKY_SVCS = [
             ("telnet",       "SERVICE","HIGH",  "Unencrypted remote shell — everything you type is visible on the network",                  "apt purge telnet",       None),
@@ -6393,7 +6521,10 @@ class SideBar(QWidget, WorkerMixin):
                 self.terminal.append_ok(f"{prefix} — not installed")
 
         SESSION.log_scan(L("btn_services"), found)
-        self._post_scan_check()
+        if on_terminal:
+            on_terminal("completed")
+        else:
+            self._post_scan_check()
 
     # ── Scan: all installed (legacy, kept for internal use) ──────────────
     def _scan_installed(self):
@@ -6499,65 +6630,115 @@ class SideBar(QWidget, WorkerMixin):
 
     # ── Scan: RUN EVERYTHING — assessment sequence ────────────────────────
     def run_everything(self, on_complete=None):
-        """Run every non-sudo scan in sequence. Lynis is skipped because it
-        needs sudo + a long runtime; users run it separately.
-
-        ``on_complete`` fires once after the final step finishes and is used
-        by AuditDashboard to open the summary assessment dialog."""
-        self._pre_scan("RUN EVERYTHING — Full Assessment", "scan", "fullscan")
-        self.terminal.append_info(
-            "Running all assessment scans in sequence. This may take 30–60 seconds."
-        )
-
-        def _run_quick():
-            run_quick_checks(self.terminal, self.findings)
-
-        def _run_temps():
-            run_temperature_check(self.terminal, self.findings)
-
-        # Drive health is intentionally excluded — it needs sudo and RUN
-        # EVERYTHING should never pop a surprise password prompt. Users
-        # trigger it explicitly via the Check Drive Health button.
-        self._re_steps = [
-            ("Unused software",          self._do_scan_unused),
-            ("Open network ports",       self._do_scan_network),
-            ("Risky services",           self._do_scan_services),
-            ("Quick security checks",    _run_quick),
-            ("Hardware temperatures",    _run_temps),
-            ("CVE vulnerabilities",      lambda: self.cve_panel.scan_cve()),
-            ("Available updates",        lambda: self.cve_panel.scan_upgrades()),
+        """Seven completion-driven, non-privileged steps; no timer polling."""
+        if getattr(self, "_re_run", None) and self._re_run["active"]:
+            self.terminal.append_warn("RUN EVERYTHING is already running.")
+            return
+        if self._any_running or self.cve_panel._any_running or self.lynis_panel._any_running:
+            self.terminal.append_warn("Wait for existing scans to finish before RUN EVERYTHING.")
+            return
+        run_id = str(uuid.uuid4())
+        def synchronous(function, done):
+            function(self.terminal, self.findings)
+            done("completed")  # Returned normally; full coverage semantics are Stage 4D.
+        steps = [
+            ("Unused software", self._do_scan_unused),
+            ("Open network ports", self._do_scan_network),
+            ("Risky services", self._do_scan_services),
+            ("Quick security checks", lambda on_terminal: synchronous(run_quick_checks, on_terminal)),
+            ("Hardware temperatures", lambda on_terminal: synchronous(run_temperature_check, on_terminal)),
+            ("CVE vulnerabilities", lambda on_terminal: self.cve_panel.scan_cve(
+                on_terminal=on_terminal, assessment_id=run_id)),
+            ("Available updates", lambda on_terminal: self.cve_panel.scan_upgrades(
+                on_terminal=on_terminal, assessment_id=run_id)),
         ]
-        self._re_step_index = 0
-        self._re_on_complete = on_complete
-        self._re_tick()
+        self._re_run = {"id": run_id, "active": True, "finalized": False,
+                        "steps": steps, "outcomes": [], "waiting": None,
+                        "advancing": False, "on_complete": on_complete,
+                        "sidebar_enabled": self.isEnabled(),
+                        "panel_enabled": self.cve_panel.isEnabled()}
+        self.cve_panel._assessment_owner = run_id
+        # Preserve existing findings and terminal evidence. Disable conflicting
+        # scan controls only for the lifetime of this orchestration.
+        self.setEnabled(False)
+        self.cve_panel.setEnabled(False)
+        self.findings.hide_all_ok_banner()
+        self._pending_section_action = ("scan", "fullscan")
+        self.stack.setCurrentIndex(0)
+        self.terminal.append_info("RUN EVERYTHING — seven assessment steps in sequence.")
+        self._re_advance(run_id)
 
-    def _re_tick(self):
-        """Drive the RUN EVERYTHING queue: wait for any running worker to
-        finish, run the next step, and once the queue is empty fire the
-        on_complete callback. Polled every 400ms via QTimer."""
-        if getattr(self, "_re_step_index", 0) >= len(getattr(self, "_re_steps", [])):
-            self.terminal.append_ok("RUN EVERYTHING complete.")
-            self._post_scan_check()
-            cb = getattr(self, "_re_on_complete", None)
-            if cb:
-                cb()
+    def _re_step_done(self, run_id, index, outcome):
+        run = getattr(self, "_re_run", None)
+        if (not run or run["id"] != run_id or not run["active"]
+                or run["waiting"] != index):
+            return  # Duplicate, cancelled/finalized or stale run callback.
+        error = None
+        if type(outcome) is dict:
+            error = outcome.get("error")
+            outcome = outcome.get("outcome")
+        if outcome not in ("succeeded", "completed", "failed", "partial", "skipped", "cancelled", "unknown"):
+            outcome = "unknown"
+        record = {"name": run["steps"][index][0], "outcome": outcome}
+        if error is not None:
+            record["error"] = error
+        run["outcomes"].append(record)
+        run["waiting"] = None
+        if not run["advancing"]:
+            self._re_advance(run_id)
+
+    def _re_advance(self, run_id):
+        run = self._re_run
+        if run["id"] != run_id or not run["active"] or run["advancing"]:
             return
-
-        if self._any_running:
-            QTimer.singleShot(400, self._re_tick)
-            return
-
-        name, fn = self._re_steps[self._re_step_index]
-        self.terminal.append_info(
-            f"▶  Step {self._re_step_index + 1}/{len(self._re_steps)}: {name}"
-        )
-        self._re_step_index += 1
+        run["advancing"] = True
         try:
-            fn()
-        except Exception as e:
-            self.terminal.append_err(f"Step '{name}' failed: {e}")
-        # Give the worker a moment to register on _workers before re-polling
-        QTimer.singleShot(500, self._re_tick)
+            while run["active"] and run["waiting"] is None:
+                index = len(run["outcomes"])
+                if index == len(run["steps"]):
+                    self._re_finalize(run_id)
+                    return
+                name, start = run["steps"][index]
+                run["waiting"] = index  # Set BEFORE start: callbacks can be synchronous.
+                self.terminal.append_info(f"▶ Step {index + 1}/7: {name}")
+                done = lambda outcome, i=index: self._re_step_done(run_id, i, outcome)
+                try:
+                    start(on_terminal=done)
+                except Exception as exc:
+                    dispatch = getattr(done, "_assessment_dispatch", None)
+                    if dispatch is not None:
+                        dispatch["error"] = str(exc)
+                    try:
+                        self.terminal.append_err(f"Step '{name}' failed: {exc}")
+                    except Exception:
+                        pass  # Retain the error without bypassing a live worker.
+                    if dispatch and dispatch["dispatched"] and not dispatch["reported"]:
+                        continue  # Keep waiting; the actual finished slot owns acknowledgement.
+                    if dispatch and dispatch["reported"] and len(run["outcomes"]) > index:
+                        run["outcomes"][index].update(outcome="failed", error=str(exc))
+                    else:
+                        done({"outcome": "failed", "error": str(exc)})
+        finally:
+            run["advancing"] = False
+
+    def _re_finalize(self, run_id):
+        run = self._re_run
+        if (run["id"] != run_id or not run["active"] or run["finalized"]
+                or run["waiting"] is not None or len(run["outcomes"]) != len(run["steps"])):
+            return
+        run["finalized"] = True
+        run["active"] = False  # Before callbacks/dialogs can enter another event loop.
+        callback, run["on_complete"] = run["on_complete"], None
+        self.cve_panel._assessment_owner = None
+        self.setEnabled(run["sidebar_enabled"])
+        self.cve_panel.setEnabled(run["panel_enabled"])
+        self.terminal.append_info("RUN EVERYTHING finished — all seven steps reached an outcome.")
+        if all(item["outcome"] in ("succeeded", "completed") for item in run["outcomes"]):
+            self._post_scan_check()
+        else:
+            self._scan_failed()
+        if callback:
+            callback()
 
     # ── Security checks ───────────────────────────────────────────────────
     def _quick_checks(self):

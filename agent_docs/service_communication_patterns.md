@@ -41,7 +41,19 @@ Completed outcomes remain in audit history. No automatic retry/reactivation.
 Legacy JSONL is paged separately and cannot trigger dialogs or worker creation.
 
 ## RUN EVERYTHING
-`SideBar.run_everything()` queues steps → `_re_tick()` polls worker completion → on empty queue fires callback → `RunEverythingSummaryDialog`.
+`SideBar.run_everything()` creates a UUID run → `_re_advance()` starts one
+step → run-local `on_terminal(outcome)` acknowledges it → next step. Workers
+acknowledge on `QThread.finished`, including CVE and update workers owned by
+CvePanel; logical success alone cannot advance. Synchronous helpers acknowledge
+return. Missing/offline checks acknowledge skipped execution. Cancellation of CVE
+waits for its worker to finish before acknowledging cancellation.
+
+`_re_step_done(run_id,index,outcome)` accepts each waiting step once. Stale,
+duplicate and finalized callbacks are ignored. `_re_finalize()` consumes the
+summary callback once after all seven outcomes. No timer chain is used. Repeated
+requests are refused; sidebar/CVE controls are disabled temporarily and CvePanel
+uses the run token to reject conflicting starts. Existing findings are preserved.
+Coverage semantics and general overlapping scans remain separate stages.
 
 ## Progress reporting
 Multi-item scans emit `[N/TOTAL] item — status` on every iteration (CVE, risky services, quick checks, updates). Counter resets at scan start.
@@ -57,3 +69,14 @@ Multi-item scans emit `[N/TOTAL] item — status` on every iteration (CVE, risky
 
 ## Thread-safety
 Widget mutation only in main-thread signal handlers. Never from worker threads.
+
+### Assessment dispatch exceptions
+
+Finish fallible CVE session bookkeeping before dispatch. The assessment-specific
+start guard registers completion first and retains a run-local dispatch token.
+Failure before start can acknowledge immediately; failure after start records an
+error and waits for actual `QThread.finished`. A stopped thread with queued slots
+is still dispatched work, not a pre-start failure. Exceptions after the adapter's
+start call also retain that boundary. Terminal outcome calculation failures become
+failed outcomes; UUID/index guards still consume acknowledgement once. Ordinary
+worker starts and command success/failure signals are unchanged.
