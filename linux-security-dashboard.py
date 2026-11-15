@@ -18,7 +18,9 @@ import json         # Reading/writing the undo log file
 import subprocess   # Running shell commands safely
 import urllib.request, urllib.parse  # Fetching CVE data from the internet
 import datetime     # Timestamps for the undo log and session summary
-import time         # Small retry backoff delays for network calls
+import selectors    # Concurrent nonblocking subprocess pipe handling
+import codecs       # Incremental UTF-8 decoding of streamed bytes
+import time         # Monotonic deadlines and small retry backoff delays
 import socket       # Detect timeout/network errors from urllib layers
 import base64       # Decoding the embedded face images
 import html         # Safely escaping text in the HTML report
@@ -1865,112 +1867,175 @@ class CommandWorker(QThread):
 
 
 class StreamingCommandWorker(QThread):
-    """Command worker that emits stdout line-by-line as the process runs.
+    """Bounded Linux pipe streaming; success requires exit zero and complete output.
 
-    Unlike `CommandWorker` (which uses `subprocess.run` and buffers the
-    entire output until exit), this uses `subprocess.Popen` and pumps
-    each line out via `output_ready` the moment it arrives. Used for
-    long-running tools like Lynis so the user sees audit progress in
-    real time rather than staring at a frozen 'please wait' for 60s.
-
-    Signal shape matches `CommandWorker` so callers can swap workers with
-    minimal change. Output is flushed to stdout only — stderr is captured
-    separately and emitted on completion for parity with apt-style tools
-    that write warnings to stderr on success."""
+    Only the direct Popen child is signalled. No process-group or privileged
+    termination is attempted, and descendant termination is never guaranteed.
+    """
 
     output_ready = pyqtSignal(str)
-    error_ready  = pyqtSignal(str)
-    finished_ok  = pyqtSignal()  # Exit zero only
-    failed       = pyqtSignal()  # Nonzero exit, timeout or exception
+    error_ready = pyqtSignal(str)
+    finished_ok = pyqtSignal()
+    failed = pyqtSignal()
+    MAX_OUTPUT_BYTES = 2 * 1024 * 1024  # Combined retained stdout + stderr.
+    MAX_LINE_CHARS = 16384
+    MAX_PROGRESS_UPDATES = 4096  # Bound queued GUI events as well as captured bytes.
+    CLEANUP_WAIT = 0.5  # Each of terminate/reap and kill/reap, outside deadline.
 
     def __init__(self, cmd, sudo=False, timeout=300, password=None):
         super().__init__()
-        self.cmd      = cmd
-        self.sudo     = sudo
-        self.timeout  = timeout
-        self.password = password
+        self.cmd, self.sudo, self.timeout, self.password = cmd, sudo, timeout, password
         self.failure_reason = None
         self.full_output = ""
+        self.output_truncated = False
+        self.direct_child_reaped = False
+
+    def _emit_progress(self, text):
+        if not text:
+            return
+        if self._progress_updates >= self.MAX_PROGRESS_UPDATES:
+            self.output_truncated = True
+            self.failure_reason = "output_limit"
+            raise ValueError("Streaming preview exceeded 4096 updates; evidence is incomplete")
+        self._progress_updates += 1
+        self.output_ready.emit(text)
+
+    def _collect_output(self, proc, input_bytes, deadline):
+        """Drain both streams, including inherited pipes, under one deadline."""
+        pending = ""
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        sent = 0
+        total = 0
+        with selectors.DefaultSelector() as selector:
+            for stream, kind in ((proc.stdout, "stdout"), (proc.stderr, "stderr")):
+                os.set_blocking(stream.fileno(), False)
+                selector.register(stream, selectors.EVENT_READ, kind)
+            if proc.stdin is not None:
+                os.set_blocking(proc.stdin.fileno(), False)
+                selector.register(proc.stdin, selectors.EVENT_WRITE, "stdin")
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(self.cmd, self.timeout)
+                for key, _ in selector.select(min(remaining, 0.1)):
+                    # A busy stream must not extend the deadline.
+                    if time.monotonic() >= deadline:
+                        raise subprocess.TimeoutExpired(self.cmd, self.timeout)
+                    stream, kind = key.fileobj, key.data
+                    try:
+                        if kind == "stdin":
+                            sent += os.write(stream.fileno(), input_bytes[sent:sent + 4096])
+                            if sent == len(input_bytes):
+                                selector.unregister(stream)
+                                stream.close()
+                            continue
+                        chunk = os.read(stream.fileno(), 65536)
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        selector.unregister(stream)
+                        stream.close()
+                        if kind == "stdout":
+                            pending += decoder.decode(b"", final=True)
+                            if pending:
+                                self._emit_progress(strip_ansi(pending))
+                                pending = ""
+                        continue
+                    allowed = self.MAX_OUTPUT_BYTES - total
+                    kept = chunk[:allowed]
+                    self._captured[kind].extend(kept)
+                    total += len(kept)
+                    if len(chunk) > allowed:
+                        self.output_truncated = True
+                        self.failure_reason = "output_limit"
+                        raise ValueError("Streaming output exceeded 2 MiB; evidence is truncated/incomplete")
+                    if kind == "stdout":
+                        pending += decoder.decode(chunk)
+                        while "\n" in pending or len(pending) >= self.MAX_LINE_CHARS:
+                            newline = pending.find("\n")
+                            end = min(newline + 1 if newline >= 0 else len(pending), self.MAX_LINE_CHARS)
+                            line, pending = pending[:end], pending[end:]
+                            clean = strip_ansi(line.rstrip("\n"))
+                            if clean:
+                                self._emit_progress(clean)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(self.cmd, self.timeout)
+        return proc.wait(timeout=remaining)
+
+    def _cleanup_child(self, proc):
+        """Bounded direct-child cleanup. Never signal a group or use sudo."""
+        try:
+            if proc.poll() is None:
+                try:
+                    proc.terminate()
+                except Exception as exc:
+                    self.error_ready.emit(f"Direct child terminate attempt failed: {exc}")
+            try:
+                proc.wait(timeout=self.CLEANUP_WAIT)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=self.CLEANUP_WAIT)
+            self.direct_child_reaped = True
+        except Exception as exc:
+            self.error_ready.emit(f"Direct child termination/reaping unconfirmed: {exc}")
 
     def run(self):
         succeeded = False
+        proc = None
         self.failure_reason = "exception"
+        self.full_output = ""
+        self.output_truncated = False
+        self.direct_child_reaped = False
+        self._captured = {"stdout": bytearray(), "stderr": bytearray()}
+        self._progress_updates = 0
         try:
-            if self.sudo and self.password:
-                full = ["sudo", "-S"] + self.cmd
-                stdin = subprocess.PIPE
-                input_bytes = self.password + b"\n"
-            elif self.sudo:
-                full = ["sudo"] + self.cmd
-                stdin = subprocess.DEVNULL
-                input_bytes = None
+            if self.timeout <= 0 or not self.timeout < float("inf"):
+                raise ValueError("Streaming timeout must be finite and positive")
+            input_bytes = self.password + b"\n" if self.sudo and self.password else None
+            full = (["sudo", "-S"] if input_bytes else ["sudo"]) + self.cmd if self.sudo else self.cmd
+            # Start before Popen so creation time counts. Popen itself cannot be
+            # interrupted safely here; see documented OS/process-creation limit.
+            deadline = time.monotonic() + self.timeout
+            proc = subprocess.Popen(full, stdin=subprocess.PIPE if input_bytes else subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+            returncode = self._collect_output(proc, input_bytes, deadline)
+            self.direct_child_reaped = True
+            if returncode != 0:
+                self.failure_reason = "nonzero_exit"
+                stderr = self._captured["stderr"].decode("utf-8", errors="replace")
+                stderr = "\n".join(line for line in stderr.splitlines()
+                                   if not line.lower().startswith("[sudo]") and "password" not in line.lower())
+                self.error_ready.emit(stderr or f"Command failed with exit code {returncode}.")
             else:
-                full = self.cmd
-                stdin = subprocess.DEVNULL
-                input_bytes = None
-
-            proc = subprocess.Popen(
-                full,
-                stdin=stdin,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=1,          # line-buffered
-                text=True,
-            )
-            # Send the sudo password once, then close stdin so the child
-            # doesn't hang waiting for more input.
-            if input_bytes is not None and proc.stdin is not None:
-                proc.stdin.write(input_bytes.decode())
-                proc.stdin.flush()
-                proc.stdin.close()
-
-            # Collect full stdout on the worker object so the caller can
-            # grab it from `finished_ok` without replaying every emission.
-            buf = []
-            if proc.stdout is not None:
-                for line in proc.stdout:
-                    buf.append(line)
-                    clean = strip_ansi(line.rstrip("\n"))
-                    if clean:
-                        self.output_ready.emit(clean)
-
-            # Stage 4B will apply the deadline to pipe reads as well as wait().
-            proc.wait(timeout=self.timeout)
-
-            stderr = proc.stderr.read() if proc.stderr is not None else ""
-            if stderr:
-                stderr = "\n".join(
-                    l for l in stderr.splitlines()
-                    if not l.lower().startswith("[sudo]")
-                    and "password" not in l.lower()
-                )
-                if stderr and proc.returncode != 0:
-                    self.error_ready.emit(stderr)
-
-            # Expose full stdout for post-run parsers (e.g. Lynis).
-            self.full_output = "".join(buf)
-            succeeded = proc.returncode == 0
-            self.failure_reason = None if succeeded else "nonzero_exit"
-            if not succeeded and not stderr:
-                self.error_ready.emit(f"Command failed with exit code {proc.returncode}.")
-
+                self.failure_reason = None
+                succeeded = True
         except subprocess.TimeoutExpired:
             self.failure_reason = "timeout"
-            self.error_ready.emit(f"Command timed out after {self.timeout} seconds.")
-            # Preserve the existing direct-child kill attempt. Bounded draining,
-            # reaping and descendant handling belong to Stage 4B.
-            try:
-                proc.kill()
-            except Exception as e:
-                logging.error(f"StreamingCommandWorker timeout cleanup: {e}")
-                self.error_ready.emit(f"Could not stop command; outcome unknown: {e}")
+            self.error_ready.emit(f"Command timed out after {self.timeout} seconds; assessment incomplete/unknown.")
         except FileNotFoundError:
             self.failure_reason = "missing_executable"
             self.error_ready.emit(f"Command not found: {self.cmd[0]}")
-        except Exception as e:
-            logging.error(f"StreamingCommandWorker error: {e}")
-            self.error_ready.emit(str(e))
+        except Exception as exc:
+            logging.error(f"StreamingCommandWorker error: {exc}")
+            self.error_ready.emit(str(exc))
         finally:
+            if proc is not None:
+                if not succeeded:
+                    self._cleanup_child(proc)
+                    self.error_ready.emit(
+                        ("Direct child reaped. " if self.direct_child_reaped else "Direct child state uncertain. ")
+                        + "Descendant state is not verified; do not retry automatically.")
+                for stream in (proc.stdin, proc.stdout, proc.stderr):
+                    if stream is not None:
+                        try:
+                            stream.close()
+                        except Exception as exc:
+                            succeeded = False
+                            self.failure_reason = self.failure_reason or "exception"
+                            self.error_ready.emit(f"Pipe cleanup failed: {exc}")
+            self.full_output = self._captured["stdout"].decode("utf-8", errors="replace")
+            self._captured.clear()
             if succeeded:
                 self.finished_ok.emit()
             else:

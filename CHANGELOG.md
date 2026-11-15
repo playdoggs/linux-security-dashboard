@@ -5,6 +5,13 @@ All notable changes to Linux Security Dashboard are documented here.
 ## [Unreleased] — v4.2.1
 
 ### Changed
+- Increment 4 Stage 4B: concurrently drain nonblocking stdout/stderr and password
+  input under one monotonic execution deadline, including inherited open pipes.
+  Cap captured output at 2 MiB and live updates at 4096; incomplete evidence fails
+  rather than reaching Lynis success parsing. Bounded direct-child cleanup and
+  owned-pipe closure report reaping separately from unverified descendant state.
+  No new termination privileges or process-group killing. Added isolated Python
+  subprocess regressions alongside existing mocked outcome/callback tests.
 - Increment 4 Stage 4A: streaming commands emit exactly one terminal outcome
   when execution returns: success only for exit zero, failure for nonzero exit,
   timeout, missing executable or exceptions. Failed Lynis audits skip successful

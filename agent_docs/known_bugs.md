@@ -3,16 +3,20 @@
 Audit date: **2026-04-23**
 
 ## Open
-### Streaming execution bounds (Increment 4 Stage 4B)
-- Stage 4A fixes terminal outcomes, not execution bounds. `StreamingCommandWorker`
-  still iterates stdout before its timed wait and drains stderr afterward.
-  Silent/partial-line stdout, full stderr, or inherited open pipes can block
-  indefinitely before a terminal signal. Output accumulation is not bounded.
-- Timeout attempts to kill only the direct child; bounded reaping, descriptor
-  closure and descendant handling remain unresolved. Unexpected read/password
-  write exceptions report failure/unknown but do not establish child termination.
-  Do not infer that a failed audit stopped every privileged descendant or retry
-  automatically. No new termination privileges or process-group kills were added.
+### Streaming environmental and cleanup limits (Increment 4 Stage 4B)
+- Execution uses one monotonic deadline across concurrent stdout/stderr/input
+  handling and process wait. Deadline starts before `Popen`; OS process creation
+  itself cannot safely be interrupted here. Kernel stalls and scheduler delays
+  can exceed wall-clock expectations.
+- Cleanup attempts terminate/wait (0.5 s), then kill/wait (0.5 s) for the direct
+  child only, with no sudo, process groups or recursive termination. Permission
+  failures or uninterruptible processes can leave termination/reaping unconfirmed.
+  Closing inherited pipes does not establish descendant termination. Never retry
+  automatically after uncertain execution.
+- Output limits are 2 MiB combined raw stdout/stderr, 4096 live updates and 16384
+  characters per update. Exceeding a byte/update limit fails the assessment with
+  `output_limit` and `output_truncated=True`; no success parser runs. Partial
+  `full_output` after any failure is diagnostic material, not complete evidence.
 
 
 ## Regression guards (previously fixed — don't regress)
@@ -53,7 +57,8 @@ Audit date: **2026-04-23**
   healthy-completion callback. They show incomplete/unknown status and notify
   `on_failed`. `QThread.finished` remains unconditional lifecycle cleanup.
 - Regression coverage: `tests/test_streaming_outcomes.py`; mocked subprocesses
-  do not establish real pipe draining, cancellation or timeout bounds.
+  do not establish real pipe draining, cancellation or timeout bounds; isolated
+  pipe/deadline tests are in `tests/test_streaming_execution.py`.
 
 ### Other
 - Background sudo uses `sudo -S` with `stdin=DEVNULL` fallback.

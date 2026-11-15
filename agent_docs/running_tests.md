@@ -110,4 +110,22 @@ cleanup through `QThread.finished` on both success and failure.
 
 Run `python3 -B -m unittest discover -s tests -q`. These fixtures do not prove
 real timeout bounds, concurrent pipe draining, descriptor cleanup or descendant
-termination; those remain Stage 4B. No sudo or host commands execute in these tests.
+termination; see Stage 4B tests below. No sudo or host commands execute in these tests.
+
+## Increment 4 Stage 4B streaming execution tests
+
+`tests/test_streaming_execution.py` runs extracted production methods in fresh
+interpreters with a six-second outer harness timeout. Only unprivileged Python
+fixtures execute: silent/partial-line children, large stderr, inherited pipes,
+closed pipes with a still-running child, ignored SIGTERM, output/update limits,
+nonzero exits, blocked stdin and injected read errors. Tests assert one outcome,
+closed owned pipes, bounded elapsed time, direct-child reaping and incomplete
+output rejection. A short-lived inherited-pipe descendant exits independently;
+no process group or recursive kill is used. The stdin fixture substitutes its
+Python argv before Popen and never invokes sudo. Stage 4A tests now mock the I/O
+collector specifically; real selector behavior is tested separately here.
+
+`test_streaming_outcomes.py` additionally checks denied terminate/kill attempts
+remain unconfirmed, without requesting privileges or performing real signals.
+Timing tests allow scheduling slack and do not prove hard real-time deadlines or
+cleanup of root-owned processes. Run with the same `python3 -B` discovery command.

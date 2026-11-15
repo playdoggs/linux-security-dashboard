@@ -47,7 +47,7 @@ The application is a single-file PyQt6 GUI. All components live in [linux-securi
 | Component | Lines | Role |
 |---|---|---|
 | `CommandWorker(QThread)` | [1255-1343](linux-security-dashboard.py#L1255-L1343) | Buffered argv command execution; sudo via `-S` + stdin password or `DEVNULL` |
-| `StreamingCommandWorker(QThread)` | [1346-1441](linux-security-dashboard.py#L1346-L1441) | Line-by-line `Popen` for long runs (Lynis); stores `full_output` for post-parse |
+| `StreamingCommandWorker(QThread)` | [1346-1441](linux-security-dashboard.py#L1346-L1441) | Deadline-aware concurrent `Popen` pipes for Lynis; bounded `full_output` for success-only parsing |
 | `HttpWorker(QThread)` | [1444-1522](linux-security-dashboard.py#L1444-L1522) | Sequential CVE lookups against `ubuntu.com/security/cves.json`; bounded retries; cancelable |
 | `WorkerMixin` | [1526-1557](linux-security-dashboard.py#L1526-L1557) | Tracks live workers in a set; `_start_worker()`, `_stop_all_workers()`, `_any_running` |
 
@@ -64,11 +64,25 @@ Update scans release both stored callbacks before notifying the outcome-specific
 caller. Tool status refreshes and worker lifecycle cleanup remain attached to
 `QThread.finished`.
 
-This contract is specific to `CommandWorker`; streaming and HTTP workers are
-unchanged. Exit status zero is not proof that the intended security state was
-achieved. Focused tests: `tests/test_command_outcomes.py`.
+The buffered implementation is specific to `CommandWorker`. Streaming execution
+is described below; HTTP worker behavior is unchanged. Exit status zero is not
+proof that the intended security state was achieved. Focused buffered tests:
+`tests/test_command_outcomes.py`.
 
 Review scope: buffered command outcomes and affected callers, 2026-11-15.
+
+Increment 4 Stage 4B: `StreamingCommandWorker` now uses Linux selectors and
+nonblocking binary pipes to drain stdout/stderr and send password input under one
+monotonic deadline. Success requires EOF on both streams, exit zero, and complete
+bounded output. Retention is at most 2 MiB combined bytes; live preview is bounded
+to 4096 updates of at most 16384 characters. Exceeding limits is a failed/incomplete
+assessment, never an input to successful Lynis parsing. A failure attempts direct
+child terminate/wait then kill/wait (0.5 seconds each); descriptors are closed and
+reaping status reported separately from descendants, whose state is unverified.
+There is no process-group kill or privileged termination fallback. Process creation
+and kernel-level stalls cannot be guaranteed interruptible. This does not change
+buffered command workers, undo validation, SQLite lifecycle or scan orchestration.
+
 Other component line ranges below reflect the earlier review baseline.
 
 ### Widgets / panels

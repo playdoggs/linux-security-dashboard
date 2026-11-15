@@ -1,5 +1,9 @@
 """Stage 4A: production streaming outcomes/callbacks with mocked subprocesses."""
 import io
+import os
+import selectors
+import codecs
+import time
 import logging
 import subprocess
 from types import SimpleNamespace
@@ -9,19 +13,36 @@ from unittest.mock import Mock, patch
 from PyQt6.QtCore import QCoreApplication
 from test_command_outcomes import CLASSES, NS, load_definition, method
 
+NS.update(os=os, selectors=selectors, codecs=codecs, time=time)
 StreamingWorker = load_definition(CLASSES['StreamingCommandWorker'])
 
 
 def process(returncode=0, wait_error=None):
     return SimpleNamespace(stdout=io.StringIO('progress\n'), stderr=io.StringIO(''),
                            stdin=io.StringIO(), returncode=returncode,
-                           wait=Mock(side_effect=wait_error), kill=Mock())
+                           wait=Mock(return_value=returncode, side_effect=wait_error), kill=Mock(),
+                           poll=Mock(return_value=returncode), terminate=Mock())
 
 
 class StreamingOutcomes(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QCoreApplication.instance() or QCoreApplication([])
+
+    def setUp(self):
+        # Keep Stage 4A outcome tests focused on terminal/callback dispatch.
+        # Actual selector/pipe behaviour is covered by test_streaming_execution.
+        def collect(worker, proc, input_bytes, deadline):
+            if input_bytes:
+                proc.stdin.write(input_bytes.decode())
+                proc.stdin.flush()
+                proc.stdin.close()
+            worker._captured['stdout'].extend(proc.stdout.read().encode())
+            worker._captured['stderr'].extend(proc.stderr.read().encode())
+            return proc.wait(timeout=worker.timeout)
+        patcher = patch.object(StreamingWorker, '_collect_output', autospec=True, side_effect=collect)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def exercise(self, proc=None, popen_error=None, threaded=False):
         worker = StreamingWorker(['fake-command'], timeout=1)
@@ -116,6 +137,22 @@ class StreamingOutcomes(unittest.TestCase):
                     self.assertEqual(owner._workers, set())
                     delete.assert_called_once_with()
                 self.assertEqual(outcomes, ['success' if exitcode == 0 else 'failure'])
+
+    def test_cleanup_permission_failure_remains_uncertain_and_bounded(self):
+        worker = StreamingWorker(['fake'])
+        proc = process()
+        proc.poll.return_value = None
+        proc.terminate.side_effect = PermissionError('not permitted')
+        proc.wait.side_effect = subprocess.TimeoutExpired('fake', 0.5)
+        proc.kill.side_effect = PermissionError('not permitted')
+        errors = []
+        worker.error_ready.connect(errors.append)
+        worker._cleanup_child(proc)
+        self.assertFalse(worker.direct_child_reaped)
+        proc.terminate.assert_called_once_with()
+        proc.kill.assert_called_once_with()
+        proc.wait.assert_called_once_with(timeout=worker.CLEANUP_WAIT)
+        self.assertTrue(any('unconfirmed' in error for error in errors))
 
     def test_lynis_actual_callback_chain_for_each_outcome(self):
         audit = method('LynisPanel', 'run_lynis')
