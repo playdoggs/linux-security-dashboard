@@ -24,7 +24,13 @@
 5. `finished_ok` → summary counters.
 
 ## Action + undo
-Sudo prompt → confirm → `CommandWorker` → verify → append to `UNDO_LOG` (in-memory + JSONL) → refresh `UndoPanel`.
+Remediation: confirm → `CommandWorker` → verify → append structured undo record
+plus display metadata to `UNDO_LOG` and JSONL → refresh `UndoPanel`.
+Undo: validate structured operation → generated confirmation → revalidate → sudo
+prompt → revalidate unchanged argv → `CommandWorker`. Only `finished_ok` removes
+the table/memory entry; failure/timeout retains it. Legacy/invalid records cannot
+prompt or create a worker. Existing history is never automatically migrated;
+successful rollback does not yet update persistent history.
 
 ## RUN EVERYTHING
 `SideBar.run_everything()` queues steps → `_re_tick()` polls worker completion → on empty queue fires callback → `RunEverythingSummaryDialog`.

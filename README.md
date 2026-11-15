@@ -31,7 +31,10 @@ This tool assumes you don't — and that's fine.
 - **Live progress in terminal** — every multi-item scan shows `[N/TOTAL] …` as it runs
 - **Risk Score** — 0 to 100, updates live as scans run
 - **Duke Nukem health face** — gets progressively more battered as your risk score rises 😄
-- **Undo Log** — every action recorded, one-click rollback, survives restarts
+- **Undo Log** — supported actions record validated reverse operations across restarts.
+  Legacy history is visible but cannot execute automatically. Reverse operations
+  may restore exposure and do not guarantee previous configuration/state; completed
+  rollback entries currently reappear after restart (persistent cleanup is pending).
 - **HTML Report** — everyday language (Executive) or full technical deep-dive; filename auto-tagged with hostname
 - **Auto-detects** what kind of machine you're running (Gaming Rig, Home Server, Docker Host, etc.) and adjusts what's flagged as normal vs suspicious
 - **Multiple themes** — Dark, Hacker, Solarized, Light, Pink

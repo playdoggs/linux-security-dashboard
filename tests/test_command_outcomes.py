@@ -5,6 +5,8 @@ Every subprocess call is mocked; these tests never invoke sudo or host commands.
 """
 import ast
 import logging
+import re
+import shlex
 from pathlib import Path
 import subprocess
 import unittest
@@ -17,7 +19,15 @@ SOURCE = Path(__file__).resolve().parents[1] / "linux-security-dashboard.py"
 TREE = ast.parse(SOURCE.read_text())
 CLASSES = {node.name: node for node in TREE.body if isinstance(node, ast.ClassDef)}
 NS = dict(QThread=QThread, pyqtSignal=pyqtSignal, subprocess=subprocess,
-          logging=logging, T={"OK": "green"}, strip_ansi=lambda text: text)
+          logging=logging, re=re, shlex=shlex, PKG_MGR="apt",
+          T={"OK": "green"}, strip_ansi=lambda text: text)
+for node in TREE.body:
+    name = node.name if isinstance(node, ast.FunctionDef) else None
+    if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+        name = node.targets[0].id
+    if name in {"UNDO_SERVICE_TARGETS", "UNDO_PACKAGE_RE", "build_undo_argv",
+                "make_undo_operation", "undo_presentation"}:
+        exec(compile(ast.Module(body=[node], type_ignores=[]), str(SOURCE), "exec"), NS)
 
 
 def load_definition(node, namespace=NS):
@@ -146,7 +156,9 @@ class CommandOutcomes(unittest.TestCase):
                               StandardButton=SimpleNamespace(Yes=1, No=2))
         with patch.dict(NS, QMessageBox=box, prompt_for_sudo_password=Mock(return_value=b"fake")):
             with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 1, b"", b"failed")):
-                undo(obj, dict(undo_cmd="sudo systemctl enable example", action="disable example"))
+                undo(obj, dict(schema_version=2,
+                               undo=dict(operation="service_enable", service="xrdp"),
+                               undo_cmd="sudo systemctl enable --now xrdp", action="disable xrdp"))
         obj._remove_undo_entry_after_rollback.assert_not_called()
 
     def test_successful_wizard_runs_steps_and_restores_controls(self):

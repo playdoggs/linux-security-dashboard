@@ -8,6 +8,9 @@
 - Argv lists only. No `shell=True`.
 - Validate package names with `valid_pkg()` before any package-manager action.
 - Parse user-facing fix commands with `shlex.split()` (or store pre-split lists). Never `cmd.split()`.
+- Undo-file command text is never executable. Use `build_undo_argv` on a versioned
+  allowlisted operation; derive previews/warnings from that same operation and
+  revalidate immediately before dispatch. Legacy records remain display-only.
 
 ## Check parsing
 - systemd state: exact equality — `output.strip() == 'active'`, not substring.

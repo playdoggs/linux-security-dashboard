@@ -9,6 +9,12 @@ All notable changes to Linux Security Dashboard are documented here.
 - Architecture, communication flow, persistence model, and test checklist updated to current implementation.
 
 ### Security
+- Increment 2 (local, pending review): replaced free-form privileged undo with
+  versioned, validated package/service operations and generated previews/warnings.
+  Legacy history remains visible but cannot execute. Unknown/malformed operations
+  cannot request sudo or start workers. Loading is bounded and never migrates files.
+  Automatic undo is limited to reviewed apt/dnf and service operations; persistent
+  removal after successful rollback remains unresolved.
 - Added an explicit security review record (2026-04-23) to docs.
 - Documented open high-impact logic/command-execution bugs in Guided Wizard and quick checks.
 

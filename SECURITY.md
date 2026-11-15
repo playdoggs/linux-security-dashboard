@@ -30,7 +30,44 @@ The user is the **operator** of the app — sudo password is theirs, every destr
 - **Exploit sketch:** A future contributor adds a finding with `cmd_remove="apt purge 'foo bar'"` (a package with a space, or a quoted shell-style argument). `cmd.split()` would split that into 4 tokens (`['apt', 'purge', "'foo", "bar'"]`), passing an unquoted token to apt. With `shlex.split()` the same string parses to 3 tokens. The risk isn't injection (argv prevents that) — it's a silent argv mis-parse that runs the wrong command under sudo.
 - **Fix:** Replace `cmd.split()` with `shlex.split(cmd)` in `_act`. Same change applies to S-002.
 
-### S-002 (MEDIUM) — Undo log is read from disk and re-executed via sudo with no integrity check
+### S-002 — Free-form privileged undo execution — Fixed locally in Increment 2 (pending review)
+
+Review scope: undo record validation, presentation and execution only, 2026-11-15.
+New records use `schema_version: 2` and an `undo` operation. `build_undo_argv`
+validates the version, exact operation fields, manager and target, then builds
+argv from application-owned templates. No stored `cmd` or `undo_cmd` is executed.
+Allowed operations are repository package installation using the matching apt/dnf
+backend, enable/start of xrdp/avahi-daemon/rpcbind, and unmask of cups. Package
+arguments reject paths, options, version expressions, local-package suffixes
+and apt action suffixes. Pacman and firewall rollback are not added.
+
+The UI derives previews and safety descriptions from the validated operation.
+Legacy records remain visible but non-executable; invalid operations cannot
+prompt for sudo or construct a worker. Execution revalidates after confirmation
+and authentication and rejects an operation changed during either dialog.
+The bounded loader skips malformed/non-object JSON and normalizes display fields;
+it never rewrites the existing history. New records are appended only.
+
+Residual trust: file contents are not authenticated. A writer can forge a valid
+allowed operation and historical metadata, but cannot choose arbitrary programs
+or options through the undo record. User confirmation and sudo policy remain
+necessary. Installed package repositories, package scripts, local service
+units and system executable resolution are trusted. This is not protection
+against replacement of the application or compromise of the user process itself.
+File symlink hardening and the successful-rollback history persistence defect
+remain separate work. Exit zero does not prove complete restoration.
+
+Validation: mocked worker/callback tests, pure parser tests and temporary-file
+history tests in `tests/test_structured_undo.py`; no privileged commands or full
+GUI were exercised. Real deployment and sudo-policy behavior remain unverified.
+
+#### Historical finding and proposed remedies (pre-Increment 2)
+
+The following describes the old implementation and is retained as evidence,
+not current execution behavior. Its quoted shell payload was not demonstrated;
+whitespace splitting did not preserve its shell quoting. A same-user-readable
+HMAC key would not authenticate history against that same-user attacker.
+
 
 - **Where:** [linux-security-dashboard.py:5114-5116](linux-security-dashboard.py#L5114-L5116) — `cmd = entry["undo_cmd"].replace("sudo ", "").split()` followed by `CommandWorker(cmd, sudo=True, password=sudo_password)`. The entries come from [load_undo_log()](linux-security-dashboard.py#L1232-L1248) which `json.loads` each line of `~/.audit-dashboard-undo.log` with no signature, schema check or argv validation.
 - **Trust boundary:** The log file lives under the user's home directory. Anyone with user-level RW (which is the same trust level as the sudo password the dialog will collect) can edit it. The interesting case is a malicious actor who landed only **read-only** persistence in `$HOME` originally and now plants a poisoned line waiting for the user to click UNDO.
@@ -86,7 +123,11 @@ The user is the **operator** of the app — sudo password is theirs, every destr
 - **Why it matters:** POSIX `sh` expands tilde only in word position (start of a word, no preceding text). After `>` the redirection target is itself a word, so `> ~/file` should expand — but behaviour differs across shells (`dash` does, `mksh` debatable). On a system where cron uses a shell that doesn't expand `~`, the cron job silently fails.
 - **Fix:** Resolve the home-directory path explicitly when building the line: `LOG = str(Path.home() / ".audit-dashboard-schedule.log")` or use `$HOME/.audit-dashboard-schedule.log`. Already-installed crontab entries should be migrated when `_install` overwrites.
 
-### S-009 (LOW) — `_run_undo` uses `replace("sudo ", "")` (replaces every occurrence)
+### S-009 — Historical free-form sudo stripping — Fixed locally in Increment 2 (pending review)
+
+Current behavior: `_run_undo` no longer strips or splits stored commands. It
+uses the validated structured builder described in S-002. The evidence below
+records the earlier implementation and its proposed string-parser fix.
 
 - **Where:** [linux-security-dashboard.py:5115](linux-security-dashboard.py#L5115).
 - **Why it matters:** `str.replace()` strips every occurrence of `"sudo "`. A package name is constrained by `valid_pkg` so it can't contain spaces, but the pattern is fragile and surprising. Any future undo command that legitimately runs `sudo` twice (unusual but not impossible — e.g. `sudo bash -c 'sudo systemctl ...'`) would lose the inner `sudo`.
@@ -96,7 +137,9 @@ The user is the **operator** of the app — sudo password is theirs, every destr
 
 ## Recently fixed
 
-No findings have been moved to "fixed" since this audit began. The first IDs assigned here (S-001 through S-009) are all open as of the date above. Items confirmed by the existing regression-guards list in [agent_docs/known_bugs.md](agent_docs/known_bugs.md) are *prior* fixes — they predate this file's ID series and aren't renumbered in.
+S-002 and S-009 have local Increment 2 fixes pending acceptance review (2026-11-15).
+Their historical evidence is retained above. Other S-001 through S-009 findings
+remain at their earlier review status; they were not re-audited in this increment. Items confirmed by the existing regression-guards list in [agent_docs/known_bugs.md](agent_docs/known_bugs.md) are *prior* fixes — they predate this file's ID series and aren't renumbered in.
 
 ---
 

@@ -190,6 +190,23 @@ locked_theme  = Light       # THEMES key, used only when theme_locked=true
 
 ### `~/.audit-dashboard-undo.log` (JSONL — one object per line)
 
+Increment 2 format (local implementation pending review, 2026-11-15):
+
+```json
+{"schema_version": 2, "undo": {"operation": "package_install", "manager": "apt", "package": "example-package"}}
+```
+
+New entries also carry historical display metadata. `make_undo_operation` derives
+only supported forward-action reversals; `build_undo_argv` validates the operation
+and constructs executable arguments. `undo_presentation` derives previews and
+warnings from that operation. Legacy, unknown-format and invalid-operation rows
+are non-executable. Execution validates before dialogs and again afterward.
+Loading preserves the file; successful rollback persistence is not fixed here.
+See SECURITY.md S-002 for target restrictions, limits and residual trust.
+
+The example below describes legacy display metadata, not executable authority:
+
+
 ```json
 {
   "time":             "2026-04-23 18:42:11",

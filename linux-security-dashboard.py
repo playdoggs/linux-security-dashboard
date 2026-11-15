@@ -1201,48 +1201,180 @@ IGNORE_LIST = set()
 UNDO_LOG = []
 
 # ── Undo log helpers ──────────────────────────────────────────────────────────
-# Maps "action command" to its "undo command" for common actions
-UNDO_MAP = {
-    "apt purge":             "apt install",
-    "apt-get purge":         "apt-get install",
-    "systemctl disable --now": "systemctl enable --now",
-    "systemctl mask":        "systemctl unmask",
-    "ufw enable":            "ufw disable",
-    "dnf remove":            "dnf install",
+# Only these previously reviewed service actions have automatic reversals.
+UNDO_SERVICE_TARGETS = {
+    "service_enable": frozenset({"xrdp", "avahi-daemon", "rpcbind"}),
+    "service_unmask": frozenset({"cups"}),
 }
+UNDO_PACKAGE_RE = re.compile(r"[a-z0-9][a-z0-9.+-]{0,99}", re.ASCII)
+
+
+def build_undo_argv(record, manager):
+    """Validate untrusted structured data and build an application-owned argv.
+
+    No executable, options or command string are accepted from the record.
+    Raise ValueError for legacy, unsupported or malformed operations.
+    """
+    if type(record) is not dict or type(record.get("schema_version")) is not int:
+        raise ValueError("Legacy or malformed undo record")
+    if record["schema_version"] != 2 or type(record.get("undo")) is not dict:
+        raise ValueError("Unsupported undo format or unavailable operation")
+    operation = record["undo"]
+    kind = operation.get("operation")
+    if type(kind) is not str:
+        raise ValueError("Invalid undo operation")
+    if kind == "package_install":
+        if set(operation) != {"operation", "manager", "package"}:
+            raise ValueError("Invalid package operation fields")
+        backend, package = operation["manager"], operation["package"]
+        if type(backend) is not str or backend not in ("apt", "dnf") or backend != manager:
+            raise ValueError("Unsupported or mismatched package manager")
+        if (type(package) is not str or not UNDO_PACKAGE_RE.fullmatch(package)
+                or package.endswith(("+", "-", ".rpm", ".deb"))):
+            # apt suffix +/- can override the requested action; dnf can interpret
+            # .rpm names as local files. Undo accepts repository package names only.
+            raise ValueError("Invalid or ambiguous repository package name")
+        return [backend, "install", "-y", package]
+    if kind in UNDO_SERVICE_TARGETS:
+        if set(operation) != {"operation", "service"}:
+            raise ValueError("Invalid service operation fields")
+        target = operation["service"]
+        if type(target) is not str or target not in UNDO_SERVICE_TARGETS[kind]:
+            raise ValueError("Unsupported service target")
+        return (["systemctl", "enable", "--now", target] if kind == "service_enable"
+                else ["systemctl", "unmask", target])
+    raise ValueError("Unsupported undo operation")
+
+
+def make_undo_operation(cmd, manager):
+    """Derive a structured reversal only from an exact supported forward shape."""
+    if type(cmd) is not str:
+        return None
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        return None
+    operation = None
+    if len(parts) in (3, 4):
+        prefix, target = parts[:-1], parts[-1]
+        if prefix in (["apt", "purge"], ["apt", "purge", "-y"],
+                      ["apt-get", "purge"], ["apt-get", "purge", "-y"]):
+            operation = {"operation": "package_install", "manager": "apt", "package": target}
+        elif prefix in (["dnf", "remove"], ["dnf", "remove", "-y"]):
+            operation = {"operation": "package_install", "manager": "dnf", "package": target}
+        elif prefix == ["systemctl", "disable", "--now"]:
+            operation = {"operation": "service_enable", "service": target}
+        elif prefix == ["systemctl", "mask"]:
+            operation = {"operation": "service_unmask", "service": target}
+    try:
+        build_undo_argv({"schema_version": 2, "undo": operation}, manager)
+    except ValueError:
+        return None
+    return operation
+
 
 def make_undo_cmd(cmd):
-    """Figure out the reverse command for a given action command.
-    Returns the undo command string, or None if we can't reverse it."""
-    for trigger, reverse in UNDO_MAP.items():
-        if trigger in cmd:
-            pkg = cmd.split()[-1]
-            return f"{reverse} {pkg}"
-    return None
+    """Return a generated preview, never executable history text."""
+    operation = make_undo_operation(cmd, PKG_MGR)
+    if operation is None:
+        return None
+    return shlex.join(build_undo_argv({"schema_version": 2, "undo": operation}, PKG_MGR))
+
+UNDO_METADATA_FIELDS = ("time", "action", "cmd", "undo_cmd", "risk_level",
+                        "rollback_does", "rollback_risk", "rollback_exploit", "name")
+MAX_UNDO_LINE_BYTES = 16384
+MAX_UNDO_HISTORY_BYTES = 8 * 1024 * 1024
+
+
+def normalize_undo_record(record):
+    """Bound historical display fields; retain operation data for strict validation."""
+    if type(record) is not dict:
+        return None
+    result = {}
+    for key in UNDO_METADATA_FIELDS:
+        value = record.get(key, "")
+        result[key] = ("".join(c if c.isprintable() else " " for c in value)[:2048]
+                       if type(value) is str else "[Invalid field]")
+    if "schema_version" in record:
+        result["schema_version"] = record["schema_version"]
+    if "undo" in record:
+        result["undo"] = record["undo"]
+    return result
+
+
+def undo_presentation(record, manager):
+    """Derive executable preview and safety text; never trust saved risk labels."""
+    try:
+        argv = build_undo_argv(record, manager)
+    except ValueError:
+        legacy = type(record) is dict and "schema_version" not in record and "undo" not in record
+        status = ("Legacy record — automatic rollback unavailable" if legacy
+                  else "Unsupported or invalid undo operation — automatic rollback unavailable")
+        return {"argv": None, "preview": status, "level": "UNKNOWN",
+                "does": status, "risk": "No command will be executed.",
+                "exploit": "Historical metadata is unverified; no operation was authorized."}
+    operation = record["undo"]
+    if operation["operation"] == "package_install":
+        does = f"Install repository package '{operation['package']}' using {operation['manager']}."
+        risk = ("Installation can run package scripts and start services. It does not "
+                "restore purged configuration or the previous package version.")
+    elif operation["operation"] == "service_enable":
+        does = f"Enable and start service '{operation['service']}'."
+        risk = "Starting this service may restore network exposure; prior service state is not recovered."
+    else:
+        does = f"Unmask service '{operation['service']}'."
+        risk = "This permits future service activation; it does not start the service or restore prior state."
+    return {"argv": argv, "preview": "sudo " + shlex.join(argv), "level": "HIGH",
+            "does": does, "risk": risk,
+            "exploit": "An unwanted or vulnerable service/package may become available again. "
+                       "This file does not prove the original action occurred."}
+
 
 def save_undo_entry(entry):
-    """Append one undo entry to the persistent log file on disk.
-    Uses append mode so previous entries are never overwritten."""
+    """Append new-format history; never migrate or replace existing records."""
     try:
-        with open(str(UNDO_LOG_FILE), "a") as f:
-            f.write(json.dumps(entry) + "\n")
+        if type(entry) is not dict or type(entry.get("schema_version")) is not int or entry["schema_version"] != 2:
+            raise ValueError("Only new-format records may be saved")
+        if entry.get("undo") is not None:
+            build_undo_argv(entry, PKG_MGR)
+        text = json.dumps(normalize_undo_record(entry)) + "\n"
+        if len(text.encode("utf-8")) > MAX_UNDO_LINE_BYTES:
+            raise ValueError("Undo record exceeds size limit")
+        with open(str(UNDO_LOG_FILE), "a", encoding="utf-8") as f:
+            f.write(text)
     except Exception as e:
         logging.error(f"Failed to save undo entry: {e}")
 
+
 def load_undo_log():
-    """Load all undo entries from the log file (from previous sessions).
-    Returns a list of dicts, oldest first. Bad lines are silently skipped."""
+    """Load bounded display records. Invalid/legacy operations remain non-executable."""
     entries = []
     try:
         if UNDO_LOG_FILE.exists():
-            with open(str(UNDO_LOG_FILE)) as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        try:
-                            entries.append(json.loads(line))
-                        except json.JSONDecodeError:
-                            pass  # Skip corrupted lines
+            with open(str(UNDO_LOG_FILE), "rb") as f:
+                consumed = 0
+                while consumed < MAX_UNDO_HISTORY_BYTES:
+                    raw = f.readline(min(MAX_UNDO_LINE_BYTES, MAX_UNDO_HISTORY_BYTES - consumed) + 1)
+                    if not raw:
+                        break
+                    consumed += len(raw)
+                    if len(raw) > MAX_UNDO_LINE_BYTES or consumed > MAX_UNDO_HISTORY_BYTES:
+                        logging.warning("Undo history size limit reached; oversized record skipped")
+                        while raw and not raw.endswith(b"\n") and consumed < MAX_UNDO_HISTORY_BYTES:
+                            raw = f.readline(MAX_UNDO_LINE_BYTES)
+                            consumed += len(raw)
+                        continue
+                    if not raw.strip():
+                        continue
+                    try:
+                        entry = normalize_undo_record(json.loads(raw.decode("utf-8")))
+                        if entry is None:
+                            raise ValueError("Undo entry must be an object")
+                        entries.append(entry)
+                    except (ValueError, RecursionError):
+                        logging.warning("Malformed undo history record skipped")
+                if consumed >= MAX_UNDO_HISTORY_BYTES:
+                    logging.warning("Undo history read limit reached; remaining records not loaded")
     except Exception as e:
         logging.error(f"Failed to load undo log: {e}")
     return entries
@@ -1879,7 +2011,8 @@ class PreActionDialog(QDialog):
         # Show undo command if we know it
         undo = make_undo_cmd(cmd)
         if undo:
-            ul = QLabel(f"↩  If you change your mind:   sudo {undo}")
+            ul = QLabel(f"↩  Available reverse operation: sudo {undo}\n"
+                        "This may restore exposure; previous configuration/state is not guaranteed.")
             ul.setWordWrap(True)
             ul.setStyleSheet(
                 f"color:{T['TEXT_DIM']};font-size:{fs(-2)}px;font-style:italic;"
@@ -2547,13 +2680,15 @@ class FindingsTable(QWidget, WorkerMixin):
         self.terminal.append_cmd(f"sudo {cmd}")
 
         # Prepare the undo log entry
-        undo     = make_undo_cmd(cmd)
-        info     = get_rollback_info(cmd, name)
-        entry    = {
+        operation = make_undo_operation(cmd, PKG_MGR)
+        undo_record = {"schema_version": 2, "undo": operation}
+        info = undo_presentation(undo_record, PKG_MGR)
+        entry = {
+            **undo_record,
             "time":             datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "action":           f"{action_type} '{name}'",
             "cmd":              f"sudo {cmd}",
-            "undo_cmd":         f"sudo {undo}" if undo else "N/A",
+            "undo_cmd":         info["preview"] if info["argv"] else "N/A",
             "risk_level":       info["level"],
             "rollback_does":    info["does"],
             "rollback_risk":    info["risk"],
@@ -5021,10 +5156,14 @@ class UndoPanel(QWidget, WorkerMixin):
 
     def _add_row(self, entry, from_prev_session=False):
         """Add one row to the undo table."""
+        entry = normalize_undo_record(entry)
+        if entry is None:
+            return
+        info = undo_presentation(entry, PKG_MGR)
         row = self.table.rowCount()
         self.table.insertRow(row)
 
-        risk_level = entry.get("risk_level", "LOW")
+        risk_level = info["level"]
         risk_colour = {
             "HIGH":   T["DANGER"],
             "MEDIUM": T["WARN"],
@@ -5035,7 +5174,7 @@ class UndoPanel(QWidget, WorkerMixin):
             "HIGH":   "🔴 ✖ HIGH RISK",
             "MEDIUM": "🟡 ▲ MEDIUM RISK",
             "LOW":    "🟢 ● LOW RISK",
-        }.get(risk_level, "LOW RISK")
+        }.get(risk_level, "UNVERIFIED / UNAVAILABLE")
 
         # Add text to time with session note
         session_note = " (prev)" if from_prev_session else " (now)"
@@ -5068,8 +5207,7 @@ class UndoPanel(QWidget, WorkerMixin):
         bl.setContentsMargins(2, 2, 2, 2)
         bl.setSpacing(0)
 
-        undo_cmd = entry.get("undo_cmd", "N/A")
-        if undo_cmd != "N/A":
+        if info["argv"] is not None:
             is_high = risk_level == "HIGH"
             ub = QPushButton("⚠  UNDO" if is_high else "↩  UNDO")
             ub.setObjectName("danger" if is_high else "warn")
@@ -5082,7 +5220,8 @@ class UndoPanel(QWidget, WorkerMixin):
             ub.clicked.connect(lambda _, e=entry: self._run_undo(e))
             bl.addWidget(ub)
         else:
-            nl = QLabel("No undo")
+            nl = QLabel("Undo unavailable")
+            nl.setToolTip(info["preview"])
             nl.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs(-2)}px;")
             bl.addWidget(nl)
 
@@ -5100,61 +5239,56 @@ class UndoPanel(QWidget, WorkerMixin):
         if not entry:
             return
 
-        risk_level = entry.get("risk_level", "LOW")
-        risk_icon  = {"HIGH":"🔴 ✖","MEDIUM":"🟡 ▲","LOW":"🟢 ●"}.get(risk_level,"●")
-
+        info = undo_presentation(entry, PKG_MGR)
         lines = [
-            f"ACTION:         {entry.get('action', '')}",
-            f"COMMAND RAN:    {entry.get('cmd', '')}",
-            f"UNDO COMMAND:   {entry.get('undo_cmd', 'N/A')}",
-            "",
-            f"── What rollback will do ──",
-            entry.get("rollback_does", "Not available"),
-            "",
-            f"── {risk_icon} Risk that returns ──",
-            entry.get("rollback_risk", "Not available"),
-            "",
-            f"── 🎯 How it could be used against you ──",
-            entry.get("rollback_exploit", "Not available"),
+            f"RECORDED ACTION (unverified): {entry.get('action', '')}",
+            f"RECORDED COMMAND (not executed): {entry.get('cmd', '')}",
+            f"GENERATED UNDO: {info['preview']}",
+            "", "What rollback will do:", info["does"],
+            "", "Risk that returns:", info["risk"],
+            "", "Security implications:", info["exploit"],
         ]
         self.detail.setPlainText("\n".join(lines))
 
     def _run_undo(self, entry):
-        """Run the undo command after showing a confirmation with risk warning."""
-        risk_level = entry.get("risk_level", "LOW")
-        warning = ""
-        if risk_level == "HIGH":
-            warning = (
-                f"\n\n⚠️  WARNING — HIGH RISK ROLLBACK\n"
-                f"{entry.get('rollback_risk', '')}\n\n"
-                f"Are you absolutely sure?"
-            )
-
+        """Execute only a revalidated operation, never a stored command string."""
+        info = undo_presentation(entry, PKG_MGR)
+        if info["argv"] is None:
+            self.terminal.append_warn(info["preview"])
+            return
+        # Freeze the previewed argv, not a mutable reference to the input record.
+        approved_argv = list(info["argv"])
         if QMessageBox.question(
             self, "Confirm Rollback",
-            f"Run: {entry['undo_cmd']}\n\n"
-            f"This reverses: {entry['action']}{warning}",
+            f"Run: {info['preview']}\n\n{info['does']}\n\n"
+            f"HIGH RISK: {info['risk']}\n\n{info['exploit']}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         ) != QMessageBox.StandardButton.Yes:
             return
-
+        # Dialogs run nested event loops: reject an operation changed meanwhile.
+        try:
+            if build_undo_argv(entry, PKG_MGR) != approved_argv:
+                raise ValueError("Undo operation changed after confirmation")
+        except ValueError:
+            self.terminal.append_warn("Undo operation changed or became invalid; nothing was executed.")
+            return
         sudo_password = prompt_for_sudo_password(
-            self,
-            "Rolling back this action requires your sudo "
-            "(administrator) password.",
+            self, "Rolling back this action requires your sudo (administrator) password.",
             terminal=self.terminal,
         )
         if sudo_password is None:
             return
-
-        self.terminal.append_cmd(entry["undo_cmd"])
-        cmd = entry["undo_cmd"].replace("sudo ", "").split()
-        w = CommandWorker(cmd, sudo=True, password=sudo_password)
+        try:
+            if build_undo_argv(entry, PKG_MGR) != approved_argv:
+                raise ValueError("Undo operation changed during authentication")
+        except ValueError:
+            self.terminal.append_warn("Undo operation changed or became invalid; nothing was executed.")
+            return
+        self.terminal.append_cmd(info["preview"])
+        w = CommandWorker(approved_argv, sudo=True, password=sudo_password)
         w.output_ready.connect(lambda t: self.terminal.append(t, T["OK"]))
         w.error_ready.connect(self.terminal.append_err)
-        w.finished_ok.connect(
-            lambda: self._remove_undo_entry_after_rollback(entry)
-        )
+        w.finished_ok.connect(lambda: self._remove_undo_entry_after_rollback(entry))
         self._start_worker(w)
 
     def _remove_undo_entry_after_rollback(self, entry):

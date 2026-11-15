@@ -16,6 +16,15 @@ None tracked. File a new `### N) …` block when one surfaces.
 - Fix commands parsed with `shlex.split()` or stored as pre-split lists. No `cmd.split()`.
 - Multi-step fixes run sequentially via `_run_next_fix_cmd()` draining a queue. No `for cmd in ...: worker.start()` loops.
 
+### Structured undo boundary (Increment 2, pending review)
+- Never run `cmd`/`undo_cmd` from history. Only validated schema-version-2
+  operations can construct sudo worker argv; unknown/legacy rows stay disabled.
+- Validate exact package/backend and reviewed service targets; derive display
+  warnings from the operation, not saved risk labels. Revalidate after dialogs.
+- Existing history is not migrated/deleted. Persistent removal after successful
+  rollback is still an open defect, separate from the privilege boundary.
+- Regression coverage: `tests/test_structured_undo.py` (mocks/temporary files).
+
 ### Undo row removal
 - Match on `time + action + cmd + undo_cmd` (four fields) — never on `time` alone.
 

@@ -23,6 +23,18 @@ This does not validate actual privileged commands or full GUI behavior.
 
 Manual application checks below require a suitable authorized test environment.
 
+## Structured undo regression tests
+
+`tests/test_structured_undo.py` covers strict operation/schema/argument validation,
+new-record creation, generated confirmations and safety text, disabled legacy and
+invalid rows, mixed/malformed/oversized history, append-only preservation,
+rejection before sudo/worker creation, mutation during dialogs, cancellation,
+and success/failure/timeout/missing-executable behavior. AST extraction avoids
+application startup; Qt widgets and all subprocess calls are mocked. History
+I/O uses temporary directories only. Run through the unittest command above.
+The Increment 1 rollback fixture now uses a valid structured operation; its
+failure-retention assertion is unchanged. No real packages/services are touched.
+
 ## Baseline
 ```bash
 python3 -m py_compile linux-security-dashboard.py
