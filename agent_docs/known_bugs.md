@@ -19,15 +19,15 @@ Audit date: **2026-04-23**
   `full_output` after any failure is diagnostic material, not complete evidence.
 
 
-### Assessment scope and general overlap (Stage 4E)
+### Assessment scope and remaining integration (Stage 4F)
 - Stage 4D reports evidence coverage independently of findings. Coverage describes
   the selected checks at scan time, not ongoing system state or certification.
 - CVE requests cover selected apt packages with at most five returned records per
   package; full pages are partial. Version/release applicability and broader
   provider/distribution support are not established by this increment.
 - RUN EVERYTHING preserves earlier main findings. They remain observations, not
-  proof of current state. CVE/updates still share a detail table. General stale
-  callbacks/overlapping panel scans remain Stage 4E.
+  proof of current state. CVE/updates still share a detail table, but current scan
+  ownership now rejects conflicting starts and retires stale callback generations.
 - Quick SSH checks inspect explicit directives in the selected file, not the full
   effective sshd configuration including all defaults/includes. Missing explicit
   directives are unverified, rather than successful coverage.
@@ -133,3 +133,26 @@ Audit date: **2026-04-23**
 - Harmless warnings are not automatically failures. LC_ALL=C applies to the sensors
   child only. Recognition covers explicit error/fatal markers and sensor access/read
   failures; it is not exhaustive sensor enumeration or proof of healthy hardware.
+
+### Scan ownership and Lynis provenance (Increment 4 Stage 4E)
+- Acquire ownership before destructive UI clearing/auth prompts; a rejected request
+  must preserve active findings, coverage and worker references. Hold the lease
+  until actual Qt completion, not merely finished_ok/failed.
+- Check worker+lease identity on every scan result/status callback. Duplicate or
+  expired callbacks cannot clear newer evidence, restore banners or release another
+  operation's ownership. Preserve Stage 4C run UUID/index/once-only finalization.
+- Lynis evidence comes only from current successful captured stdout. Shared logs,
+  missing/empty output and unrecognized completion summaries are not success.
+- Remaining: full GUI close/shutdown behaviour, HTTP total execution deadlines,
+  real platform permissions and real-version Lynis format compatibility require
+  Stage 4F validation. No cross-process/system-wide scan lock is claimed.
+
+### Stage 4E startup rollback guards
+- All preparation after successful admission must remain inside guaranteed cleanup,
+  including coverage/banner initialization. Failed preparation must not strand depth.
+- Connect cleanup and register references transactionally before dispatch. Partial
+  signal/reference registration must not leave a non-running owner worker.
+- Native cleanup is idempotent; disconnected/late callbacks cannot retire a newer
+  operation. A start exception alone is not proof that no worker ran.
+- Preserve original errors if UI restoration/delete scheduling fails. Never delete
+  or release a live/dispatched worker to recover the coordinator.

@@ -191,3 +191,38 @@ these subtests. Each failure phrase is checked with normal, hot and absent readi
 coverage, findings retention, banner and HTML verdicts are exercised through
 production methods. Separate cases ensure harmless warnings and unrelated uses of
 "failed" remain non-fatal. No command is actually executed by these cases.
+
+## Increment 4 Stage 4E scan isolation
+
+`tests/test_scan_isolation.py` binds production entry points, ownership wrappers,
+worker dispatch, result adapters, coverage/banner methods and Lynis parsing to
+widget doubles. Controlled signals test overlapping individual/RUN EVERYTHING
+requests, direct panel starts, stale findings/status/banner updates, duplicate
+completion and CVE responses, fast dispatch, pre/post-start exceptions, owned
+seven-step completion and the legacy three-step scope. Findings/manual mutation
+requests cannot bypass active ownership. A real QThread/QCoreApplication fixture
+checks queued results arrive before ownership release, without launching a GUI or
+subprocess. Existing buffered/streaming/SQLite tests continue unchanged in scope.
+
+Lynis tests use current-attempt strings and temporary missing/empty/stale log
+fixtures which must never be read as evidence. Success requires both the worker's
+successful thread completion and recognizable complete output; failures, truncation,
+parser exceptions and partial output retain incomplete status and existing warnings.
+Installation-to-audit handoff retains one lease and rejects late installation signals.
+No actual sudo, tool install, network scan or host configuration operation runs.
+
+These tests do not prove window-close/shutdown handling, arbitrary third-party
+callbacks or all real Lynis formats. They model one application instance; other
+processes remain outside its GUI ownership coordinator.
+
+### Stage 4E startup rollback acceptance regressions
+
+The admission-banner regression failed against the rejected implementation with an
+escaped exception and retained nesting depth. Cleanup-signal fault injection also
+reproduced a phantom non-running worker and blocked retries. Tests now cover coverage
+initialization errors, nested admission, pre-worker run setup/control restoration,
+first/later cleanup connections, partial reference additions, cleanup errors that
+must not mask original startup errors, and once-only delete scheduling. Retrying a
+scan must succeed after rollback; delayed old completion must not retire its worker.
+Existing fast/queued/post-dispatch cases still require real completion before release.
+Signal doubles implement disconnect, allowing assertions on partial registration.

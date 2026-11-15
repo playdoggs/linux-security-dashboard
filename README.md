@@ -30,6 +30,10 @@ This tool assumes you don't — and that's fine.
   separate coverage states. Failed, partial, skipped, cancelled or unknown checks
   prevent a complete assessment verdict; zero detected findings is not an all-clear.
   Results describe the selected checks at scan time, not certification or continuous monitoring.
+- **Scan isolation** — conflicting scans and evidence-changing actions are blocked until
+  the active operation finishes. A blocked request explains why; retry afterward.
+  Lynis uses captured output from the current attempt, never an old shared log.
+  Unrecognized or incomplete Lynis summaries remain unknown rather than clean.
 - **Offline-aware** — detects no internet and advises you; CVE and tool install gracefully skip with a clear message
 - **Live progress in terminal** — every multi-item scan shows `[N/TOTAL] …` as it runs
 - **Risk Score** — 0 to 100, updates live as scans run

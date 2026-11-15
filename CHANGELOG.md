@@ -5,6 +5,19 @@ All notable changes to Linux Security Dashboard are documented here.
 ## [Unreleased] — v4.2.1
 
 ### Changed
+- Increment 4 Stage 4E: add shared operation/worker identities to isolate findings,
+  coverage, status and report inputs. Reject conflicting requests before clearing
+  or authorization; ignore retired/duplicate scan callbacks and retain workers
+  until actual Qt completion. Preserve seven-step RUN EVERYTHING; remove delayed
+  timers from the legacy three-check full scan. Individual CVE/update completion
+  uses actual thread termination, with conservative parser/setup failures.
+  Lynis now uses only successful current-attempt output with a recognized summary;
+  shared log reading and sudo-cat fallback were removed. Added overlap/stale-result,
+  startup, handoff, provenance and real-QThread ordering regression tests.
+  Acceptance rollback corrections now protect admission preparation and make signal/
+  reference registration exception-safe. Failed pre-dispatch setup restores state
+  and releases phantom references; dispatched work retains completion ownership.
+  Cleanup is idempotent and preserves original errors.
 - Increment 4 Stage 4D: separate six-state evidence coverage from findings severity.
   Require all seven checks to succeed before a complete verdict; missing, partial,
   failed or unknown checks suppress all-clear reporting. Show per-step coverage in

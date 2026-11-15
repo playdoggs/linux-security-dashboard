@@ -30,6 +30,7 @@ import sqlite3      # Transactional undo lifecycle storage (Increment 3 Stage A)
 import stat         # Validate protected history paths
 import uuid         # Stable record and attempt identifiers
 from contextlib import contextmanager
+from functools import wraps
 import configparser # Reading and writing the user's saved preferences
 import shutil       # Checking if external tools (like pkexec) are installed
 import webbrowser   # Auto-open saved HTML reports in the default browser
@@ -2213,6 +2214,183 @@ class HttpWorker(QThread):
         self.finished_ok.emit()
 
 
+class ScanOwnership:
+    """One GUI-thread result owner; worker references survive until Qt finished."""
+    def __init__(self):
+        self.token = None
+        self.label = None
+        self.depth = 0
+        self.workers = set()
+
+    def enter(self, label, token=None):
+        if self.token is not None:
+            if token != self.token:
+                return None
+        elif token is not None:
+            return None  # An expired continuation cannot create a new operation.
+        else:
+            self.token, self.label = str(uuid.uuid4()), label
+        self.depth += 1
+        return self.token
+
+    def leave(self, token):
+        if token == self.token:
+            self.depth -= 1
+            self._release()
+
+    def retire(self, worker):
+        record = getattr(worker, "_scan_record", None)
+        if record is not None:
+            record["live"] = False
+        self.workers.discard(worker)
+        self._release()
+
+    def _release(self):
+        if not self.depth and not self.workers:
+            self.token = self.label = None
+
+
+def scan_owner(widget):
+    owner = getattr(widget, "_scan_owner", None)
+    if owner is None:
+        owner = getattr(getattr(widget, "terminal", None), "_scan_owner", None)
+    return owner if isinstance(owner, ScanOwnership) else None
+
+
+def scan_join(widget):
+    owner = scan_owner(widget)
+    return {"_scan_token": owner.token} if owner is not None else {}
+
+
+def scan_operation(function):
+    """Reject conflicts and roll back admission failures without abandoning work."""
+    @wraps(function)
+    def operation(self, *args, **kwargs):
+        continuation = kwargs.pop("_scan_token", None)
+        if len(args) == 1 and type(args[0]) is bool and function.__code__.co_argcount == 1:
+            args = ()  # Qt clicked(bool) on an originally zero-argument slot.
+        owner = scan_owner(self)
+        if owner is None:
+            return function(self, *args, **kwargs)
+        label = function.__name__.strip("_").replace("_", " ")
+        # Read the old token before acquisition: even a failing attribute lookup
+        # must not leave a newly acquired lease behind.
+        prior_token = getattr(self, "_scan_token", None)
+        token = owner.enter(label, continuation)
+        if token is None:
+            self.terminal.append_warn(f"Cannot start {label}: {owner.label or 'the prior operation'} owns the results. Wait for completion.")
+            return False
+        body_entered = False
+        prior_coverage = coverage_snapshot = banner = banner_visible = None
+        controls = []
+        previous_run = None
+        def cleanup(action):
+            try:
+                action()
+            except Exception as exc:
+                try:
+                    self.terminal.append_err(f"{label} cleanup could not be completed: {exc}")
+                except Exception:
+                    pass  # Never mask the original preparation/setup exception.
+        try:
+            # Everything following acquisition belongs to this protected region.
+            self._scan_token = token
+            previous_run = getattr(self, "_re_run", None)
+            for widget in (self, getattr(self, "cve_panel", None)):
+                getter = getattr(widget, "isEnabled", None)
+                if getter is not None:
+                    enabled = getter()
+                    if type(enabled) is bool:
+                        controls.append((widget, enabled))
+            if continuation is None:
+                findings = getattr(self, "findings", self)
+                prior_coverage = getattr(findings, "_assessment_coverage", None)
+                if type(prior_coverage) is dict:
+                    coverage_snapshot = dict(prior_coverage)
+                    prior_coverage["active"], prior_coverage["outcomes"] = True, []
+                banner = getattr(findings, "_ok_banner", None)
+                hidden = banner.isHidden() if banner is not None else None
+                if type(hidden) is bool:
+                    banner_visible = not hidden
+                if hasattr(findings, "hide_all_ok_banner"):
+                    findings.hide_all_ok_banner()
+            body_entered = True
+            return function(self, *args, **kwargs)
+        except Exception as exc:
+            # A running/finished-but-not-yet-acknowledged worker keeps the lease.
+            for worker in owner.workers:
+                record = getattr(worker, "_scan_record", None)
+                if record and record["token"] == token:
+                    record["error"] = str(exc)
+            if not owner.workers:
+                if not body_entered:
+                    if coverage_snapshot is not None:
+                        def restore_coverage():
+                            prior_coverage.clear()
+                            prior_coverage.update(coverage_snapshot)
+                        cleanup(restore_coverage)
+                    if banner_visible is not None:
+                        cleanup(lambda: banner.setVisible(banner_visible))
+                # Restore controls only when no asynchronous work still owns them.
+                if body_entered:
+                    for widget, enabled in controls:
+                        cleanup(lambda w=widget, e=enabled: w.setEnabled(e))
+                if function.__name__ == "run_everything":
+                    def abort_unstarted_run():
+                        run = getattr(self, "_re_run", None)
+                        if run is not previous_run and run and run["active"]:
+                            run.update(active=False, finalized=True, on_complete=None)
+                            self.cve_panel._assessment_owner = None
+                    cleanup(abort_unstarted_run)
+            try:
+                self.terminal.append_err(f"{label} failed; results may be incomplete: {exc}")
+            except Exception:
+                pass
+            if continuation is not None:
+                raise  # Preserve the original error for the seven-step orchestrator.
+            return False
+        finally:
+            cleanup(lambda: setattr(self, "_scan_token", prior_token))
+            cleanup(lambda: owner.leave(token))
+    return operation
+
+
+def bind_scan_worker(widget, worker):
+    owner = scan_owner(widget)
+    record = getattr(worker, "_scan_record", None)
+    if record is None and owner is not None and owner.token is not None:
+        record = {"owner": owner, "token": owner.token, "live": True, "error": None,
+                  "id": str(uuid.uuid4())}
+        worker._scan_record = record
+    return record
+
+
+def scan_slot(widget, worker, callback, success=False, once=False):
+    record = bind_scan_worker(widget, worker)
+    called = False
+    def apply(*args):
+        nonlocal called
+        if record is not None:
+            if not record["live"] or record["owner"].token != record["token"]:
+                return
+            if success and record["error"]:
+                return
+        if once and called:
+            return
+        called = True
+        try:
+            return callback(*args)
+        except Exception as exc:
+            if record is None:
+                raise
+            record["error"] = str(exc)
+            try:
+                widget.terminal.append_err(f"Scan result handling failed; coverage unknown: {exc}")
+            except Exception:
+                pass
+    return apply
+
+
 # ── Worker lifecycle manager mixin ────────────────────────────────────────────
 class WorkerMixin:
     """Mixin class that adds safe worker thread management to any widget.
@@ -2225,13 +2403,62 @@ class WorkerMixin:
         self._workers = set()
 
     def _start_worker(self, worker):
-        """Start a worker thread and register it for cleanup when done."""
-        # When the worker finishes, remove it from our tracking set
-        worker.finished.connect(lambda: self._workers.discard(worker))
-        # Also clean up on any error that causes an unclean exit
-        worker.finished.connect(worker.deleteLater)
-        self._workers.add(worker)
-        worker.start()
+        """Register/connect/dispatch transactionally; retain dispatched workers."""
+        record = None
+        connected = []
+        state = {"start_called": False, "finished": False,
+                 "discarded": False, "deleted": False, "retired": False}
+        def attempt(action):
+            try:
+                action()
+            except Exception as exc:
+                try:
+                    self.terminal.append_err(f"Worker cleanup failed: {exc}")
+                except Exception:
+                    pass  # Cleanup must not hide the original startup error.
+        def discard():
+            state["finished"] = True
+            if not state["discarded"]:
+                state["discarded"] = True
+                attempt(lambda: self._workers.discard(worker))
+        def delete():
+            if not state["deleted"]:
+                state["deleted"] = True
+                attempt(lambda: worker.deleteLater())
+        def retire():
+            if not state["retired"]:
+                state["retired"] = True
+                if record is not None:
+                    attempt(lambda: record["owner"].retire(worker))
+                attempt(lambda: setattr(worker, "_start_cleanup_done", True))
+        try:
+            worker._start_cleanup_done = False
+            record = bind_scan_worker(self, worker)
+            # Install all completion cleanup before retaining/starting the worker.
+            for slot in ((discard, delete, retire) if record is not None else (discard, delete)):
+                worker.finished.connect(slot)
+                connected.append(slot)
+            self._workers.add(worker)
+            if record is not None:
+                record["owner"].workers.add(worker)
+            state["start_called"] = True
+            worker.start()
+        except Exception:
+            # Setup failures before the start call are known pre-dispatch. Once
+            # called, consult actual Qt state/finished delivery, not the exception.
+            dispatched = False
+            if state["start_called"]:
+                try:
+                    dispatched = state["finished"] or worker.isRunning() or worker.isFinished()
+                except Exception:
+                    dispatched = True  # Uncertain: keep refs for real completion.
+            if not dispatched:
+                for slot in connected:
+                    attempt(lambda s=slot: worker.finished.disconnect(s))
+                discard()
+                delete()
+                retire()
+            raise
         return worker
 
     def _start_assessment_worker(self, worker, outcome, on_terminal):
@@ -2249,6 +2476,9 @@ class WorkerMixin:
             if state["starting"] or not state["finished"] or state["reported"]:
                 return
             state["reported"] = True
+            record = getattr(worker, "_scan_record", None)
+            if record is not None and record["error"] and state["error"] is None:
+                state["error"] = record["error"]
             if state["error"] is not None:
                 on_terminal({"outcome": "failed", "error": state["error"]})
             else:
@@ -2270,8 +2500,14 @@ class WorkerMixin:
             # slots still need delivery. isRunning() alone is insufficient.
             state["dispatched"] = state["finished"] or worker.isRunning() or worker.isFinished()
             if not state["dispatched"]:
-                self._workers.discard(worker)
-                worker.deleteLater()
+                if not getattr(worker, "_start_cleanup_done", False):
+                    # An overridden start adapter may fail before the transactional
+                    # starter runs. Preserve its original error during fallback.
+                    for cleanup in (lambda: self._workers.discard(worker), lambda: worker.deleteLater()):
+                        try:
+                            cleanup()
+                        except Exception:
+                            pass
                 state["finished"] = True  # Confirmed pre-dispatch failure.
             try:
                 self.terminal.append_err(f"Assessment worker setup failed: {exc}")
@@ -2323,6 +2559,10 @@ class TerminalPanel(QWidget, WorkerMixin):
     Shows raw command output, status messages, and scan results.
     Users can adjust the font size with A+/A- and clear it at any time."""
 
+    @scan_operation
+    def _clear_output(self):
+        self.output.clear()
+
     def __init__(self):
         super().__init__()
         self._init_workers()
@@ -2351,7 +2591,7 @@ class TerminalPanel(QWidget, WorkerMixin):
         clr.setObjectName("neutral")
         clr.setFixedHeight(22)
         clr.setToolTip("Clear the terminal output")
-        clr.clicked.connect(lambda: self.output.clear())
+        clr.clicked.connect(self._clear_output)
         hl.addWidget(clr)
         layout.addWidget(hdr)
 
@@ -2846,6 +3086,8 @@ class FindingsTable(QWidget, WorkerMixin):
     def __init__(self, terminal):
         super().__init__()
         self._init_workers()
+        self._scan_owner = ScanOwnership()
+        terminal._scan_owner = self._scan_owner
         self.terminal    = terminal  # Reference to the terminal panel
         self.expert_mode = True      # Show all findings vs essential only
         self.profile_key = "mixed"  # Current system profile (affects tagging)
@@ -3209,6 +3451,7 @@ class FindingsTable(QWidget, WorkerMixin):
             )
             self.table.setRowHeight(i, 34)
 
+    @scan_operation
     def _ignore(self, name):
         """Remove a finding from the table and add it to the ignore list."""
         IGNORE_LIST.add(name)
@@ -3237,6 +3480,7 @@ class FindingsTable(QWidget, WorkerMixin):
         d  = self.table.item(row, 4).text() if self.table.item(row, 4) else ""
         ExplainDialog(n, ft, r, d, self.table).exec()
 
+    @scan_operation
     def _act(self, cmd, name, action_type, risk):
         """Run an action (remove/disable) after showing the confirmation dialog.
         Prompts for sudo password via a GUI dialog if credentials are not cached."""
@@ -3293,9 +3537,9 @@ class FindingsTable(QWidget, WorkerMixin):
 
         # Run the command in a background thread
         w = CommandWorker(cmd.split(), sudo=True, password=sudo_password)
-        w.output_ready.connect(lambda t: self.terminal.append(t, T["OK"]))
-        w.error_ready.connect(self.terminal.append_err)
-        w.finished_ok.connect(lambda: self._verify(cmd, name, risk, entry))
+        w.output_ready.connect(scan_slot(self, w, lambda t: self.terminal.append(t, T["OK"]), success=False, once=False))
+        w.error_ready.connect(scan_slot(self, w, self.terminal.append_err, success=False, once=False))
+        w.finished_ok.connect(scan_slot(self, w, lambda: self._verify(cmd, name, risk, entry), success=True, once=True))
         self._start_worker(w)
 
     def _verify(self, cmd, name, risk, entry):
@@ -3358,6 +3602,7 @@ class FindingsTable(QWidget, WorkerMixin):
         RISK.remove_entry(risk)
         self.score_changed.emit()
 
+    @scan_operation
     def clear_findings(self):
         """Clear all findings and reset the risk score to zero."""
         self.table.setRowCount(0)
@@ -4177,6 +4422,7 @@ class GuidedWizard(QDialog, WorkerMixin):
             prefix = "✅  " if done else "⚠️  "
             item.setText(f"{prefix}{name}")
 
+    @scan_operation
     def _run_fix(self):
         """Run all the commands for the selected fix after confirmation."""
         if self._fix_running:
@@ -4251,10 +4497,10 @@ class GuidedWizard(QDialog, WorkerMixin):
         w = CommandWorker(
             cmd_list, sudo=True, timeout=120, password=self._fix_password
         )
-        w.output_ready.connect(lambda t: self.terminal.append(t, T["OK"]))
-        w.error_ready.connect(self.terminal.append_err)
-        w.finished_ok.connect(self._run_next_fix_cmd)
-        w.failed.connect(self._fix_failed)
+        w.output_ready.connect(scan_slot(self, w, lambda t: self.terminal.append(t, T["OK"]), success=False, once=False))
+        w.error_ready.connect(scan_slot(self, w, self.terminal.append_err, success=False, once=False))
+        w.finished_ok.connect(scan_slot(self, w, self._run_next_fix_cmd, success=True, once=True))
+        w.failed.connect(scan_slot(self, w, self._fix_failed, success=False, once=True))
         self._start_worker(w)
 
     def _fix_failed(self):
@@ -4637,230 +4883,152 @@ class LynisPanel(QWidget, WorkerMixin):
             self.status.setText("Action cancelled.")
         return pw
 
+    @scan_operation
     def run_lynis(self, on_complete=None, on_failed=None):
-        """Check if Lynis is installed, offer to install it, then run the audit."""
+        """Run one authorized audit, using current-worker output only."""
+        join = scan_join(self)
         if not shutil.which("lynis"):
             reply = QMessageBox.question(
-                self, "Install Lynis?",
-                "Lynis is not installed.\n\nInstall it now? (requires sudo)",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            if reply == QMessageBox.StandardButton.Yes:
-                sudo_password = self._get_sudo_password(
-                    "Installing Lynis requires your sudo (administrator) password.",
-                    force_prompt=True
-                )
-                if sudo_password is None:
-                    return
-                self.status.setText("Installing Lynis...")
-                w = CommandWorker(
-                    ["apt", "install", "lynis", "-y"],
-                    sudo=True,
-                    timeout=120,
-                    password=sudo_password
-                )
-                w.output_ready.connect(lambda t: self.terminal.append(t, T["OK"]))
-                w.error_ready.connect(self.terminal.append_err)
-                w.finished_ok.connect(
-                    lambda: self.run_lynis(on_complete=on_complete, on_failed=on_failed)
-                )  # Retry only after a successful install
-                w.failed.connect(lambda: self.status.setText("Lynis installation failed."))
+                self, "Install Lynis?", "Lynis is not installed. Install it now? (requires sudo)",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if reply != QMessageBox.StandardButton.Yes:
+                self.status.setText("Lynis audit skipped; dependency unavailable.")
                 if on_failed:
-                    w.failed.connect(on_failed)
-                self._start_worker(w)
+                    on_failed()
+                return
+            password = self._get_sudo_password("Installing Lynis requires your sudo (administrator) password.", force_prompt=True)
+            if password is None:
+                if on_failed:
+                    on_failed()
+                return
+            self.status.setText("Installing Lynis...")
+            w = CommandWorker(["apt", "install", "lynis", "-y"], sudo=True, timeout=120, password=password)
+            state = {"success": False}
+            w.output_ready.connect(scan_slot(self, w, lambda text: self.terminal.append(text, T["OK"]), success=False, once=False))
+            w.error_ready.connect(scan_slot(self, w, self.terminal.append_err, success=False, once=False))
+            w.finished_ok.connect(scan_slot(self, w, lambda: state.update(success=True), success=True, once=True))
+            def installed():
+                record = getattr(w, "_scan_record", None)
+                if state["success"] and not (record and record["error"]):
+                    try:
+                        self.run_lynis(on_complete=on_complete, on_failed=on_failed, **join)
+                    except Exception as exc:
+                        self.status.setText("Lynis audit startup failed; evidence is incomplete/unknown.")
+                        self.terminal.append_err(f"Lynis startup failed: {exc}")
+                        if on_failed:
+                            on_failed()
+                else:
+                    self.status.setText("Lynis installation failed.")
+                    if on_failed:
+                        on_failed()
+            w.finished.connect(scan_slot(self, w, installed, success=False, once=True))
+            self._start_worker(w)
             return
-
-        sudo_password = self._get_sudo_password(
-            "Running a Lynis audit requires your sudo (administrator) password.",
-            force_prompt=True
-        )
-        if sudo_password is None:
+        password = self._get_sudo_password("Running a Lynis audit requires your sudo (administrator) password.", force_prompt=True)
+        if password is None:
+            if on_failed:
+                on_failed()
             return
-
         self.output.clear()
-        self.status.setText("Running Lynis audit — streaming progress below...")
+        self.status.setText("Running Lynis audit — current attempt only...")
         self.terminal.append_cmd("sudo lynis audit system --quick")
-        self._lappend("Running Lynis security audit...", T["ACCENT"])
-        self._lappend("This checks your system against security best practices.\n", T["TEXT_DIM"])
-
-        # StreamingCommandWorker pumps stdout line-by-line so the user sees
-        # Lynis actually doing work during its 60-second run, instead of a
-        # silent pause followed by a dump at the end.
-        w = StreamingCommandWorker(
-            ["lynis", "audit", "system", "--quick"],
-            sudo=True,
-            timeout=200,
-            password=sudo_password,
-        )
-        # Pipe each streamed line to the shared terminal so there's visible
-        # progress while the audit runs.
-        w.output_ready.connect(lambda t: self.terminal.append(t))
-        w.error_ready.connect(lambda t: self._lappend(t, T["DANGER"]))
-        # Parse once, after completion — using the full accumulated output
-        # so findings are consistent (no double-counting from partial emissions).
-        w.finished_ok.connect(
-            lambda worker=w: self._parse_lynis_output(getattr(worker, "full_output", ""))
-        )
-        w.finished_ok.connect(
-            lambda: self.status.setText("Lynis audit complete — see results above.")
-        )
-        w.finished_ok.connect(
-            lambda: self.terminal.append_ok("Lynis Full Audit complete.")
-        )
-        if on_complete:
-            w.finished_ok.connect(on_complete)
-        w.failed.connect(lambda: self.status.setText(
-            "Lynis audit failed or did not complete reliably — results are incomplete/unknown."
-        ))
-        w.failed.connect(lambda: self.terminal.append_warn(
-            "Lynis audit unsuccessful; no clean assessment can be concluded. See errors above."
-        ))
-        if on_failed:
-            w.failed.connect(on_failed)
+        w = StreamingCommandWorker(["lynis", "audit", "system", "--quick"],
+                                   sudo=True, timeout=200, password=password)
+        state = {"success": False}
+        w.output_ready.connect(scan_slot(self, w, lambda text: self.terminal.append(text), success=False, once=False))
+        w.error_ready.connect(scan_slot(self, w, lambda text: self._lappend(text, T["DANGER"]), success=False, once=False))
+        w.finished_ok.connect(scan_slot(self, w, lambda: state.update(success=True), success=True, once=True))
+        def audited():
+            record = getattr(w, "_scan_record", None)
+            valid = state["success"] and not (record and record["error"]) and not getattr(w, "output_truncated", False)
+            try:
+                if valid:
+                    result = self._parse_lynis_output(getattr(w, "full_output", ""))
+                else:
+                    self._parse_lynis_partial(getattr(w, "full_output", ""))
+                    result = None
+            except Exception as exc:
+                result = None
+                self.terminal.append_err(f"Lynis evidence could not be parsed: {exc}")
+            if type(result) is dict and result.get("outcome") == "succeeded":
+                self.status.setText("Lynis audit complete — current-attempt evidence parsed.")
+                self.terminal.append_ok("Lynis Full Audit complete.")
+                if on_complete:
+                    on_complete()
+            else:
+                self.status.setText("Lynis audit failed or evidence is incomplete/unknown.")
+                self.terminal.append_warn("No clean assessment can be concluded from this Lynis attempt.")
+                if on_failed:
+                    on_failed()
+        w.finished.connect(scan_slot(self, w, audited, success=False, once=True))
         self._start_worker(w)
 
-    def _read_lynis_log(self):
-        """Return the contents of /var/log/lynis.log as a string, or None if
-        unreadable. Tries a direct read first; falls back to `sudo -n cat`
-        since sudo credentials are still cached from the audit we just ran."""
-        try:
-            with open("/var/log/lynis.log") as f:
-                return f.read()
-        except FileNotFoundError:
-            return None
-        except PermissionError:
-            pass
-        except Exception as e:
-            logging.error(f"Lynis log direct read error: {e}")
-            return None
-
-        # Fall back to sudo -n (non-interactive). The Lynis audit just finished,
-        # so the sudo timestamp is fresh — no password prompt needed.
-        try:
-            r = subprocess.run(
-                ["sudo", "-n", "cat", "/var/log/lynis.log"],
-                capture_output=True, timeout=5
-            )
-            if r.returncode == 0:
-                return r.stdout.decode("utf-8", errors="replace")
-        except Exception as e:
-            logging.error(f"Lynis log sudo read error: {e}")
-        return None
+    def _parse_lynis_partial(self, text):
+        """Retain explicit current-attempt observations without a success parser."""
+        for raw in strip_ansi(text).splitlines():
+            line = raw.strip()
+            if re.match(r"^\d{4}-\d{2}-\d{2}[ T]", line):
+                continue
+            warning = re.search(r"\bwarning\b", line, re.I)
+            suggestion = re.search(r"\bsuggestion\b", line, re.I)
+            if re.search(r"\b(?:Warnings?|Suggestions?)\s*(?:[:=]\s*\d+|\(\d+\))", line, re.I):
+                continue
+            if warning or suggestion:
+                risk = "MEDIUM" if warning else "LOW"
+                self.findings.add_finding(line[:60], "HARDENING", risk,
+                                          "Partial current-attempt Lynis observation: " + line)
+                self._lappend(line, T["WARN"] if warning else T["TEXT_DIM"])
 
     def _parse_lynis_output(self, text):
-        """Parse Lynis output and display results. Try the structured log file
-        first (gives cleaner results), fall back to parsing raw output."""
+        """Current-attempt captured stdout only. Never consult a shared log."""
         self.output.clear()
         text = strip_ansi(text)
-
-        # Try reading the structured Lynis log file first
-        log = self._read_lynis_log()
-        if log is not None:
-            warns = []; suggs = []; idx = None
-            for line in log.splitlines():
-                if "|WARNING|" in line:
-                    p = line.split("|")
-                    if len(p) > 2:
-                        warns.append(p[-1].strip())
-                elif "|SUGGESTION|" in line:
-                    p = line.split("|")
-                    if len(p) > 2:
-                        suggs.append(p[-1].strip())
-                m = re.search(r"hardening_index=(\d+)", line, re.I)
-                if m:
-                    idx = int(m.group(1))
-
-            if idx is not None:
-                colour = T["OK"] if idx > 70 else (T["WARN"] if idx > 40 else T["DANGER"])
-                self._lappend(f"  Lynis Hardening Index: {idx} / 100", colour)
-                self._lappend(
-                    "  (70+ is good, 85+ is excellent)", T["TEXT_DIM"]
-                )
-
-            self._lappend(f"\n── WARNINGS ({len(warns)}) ──", T["WARN"])
-            for w in warns:
-                self._lappend(f"  ⚠  {w}", T["WARN"])
-                self.findings.add_finding(
-                    w[:60], "HARDENING", "MEDIUM",
-                    f"Lynis warning: {w}"
-                )
-
-            self._lappend(f"\n── SUGGESTIONS ({len(suggs)}) ──", T["TEXT_DIM"])
-            for s in suggs[:20]:
-                self._lappend(f"  ℹ  {s}", T["TEXT_DIM"])
-                self.findings.add_finding(
-                    s[:60], "HARDENING", "LOW",
-                    f"Lynis suggestion: {s}"
-                )
-
-            # Surface a visible INFO row in the main findings table even when
-            # Lynis flagged nothing — without it the user sees a blank table
-            # and can't tell the audit actually ran.
-            if not warns and not suggs:
-                idx_text = f" (hardening index {idx}/100)" if idx is not None else ""
-                self.findings.add_finding(
-                    "Lynis full audit", "HARDENING", "INFO",
-                    f"✔ Clean — 0 warnings, 0 suggestions{idx_text}."
-                )
-
-            SESSION.log_scan("Lynis Full Audit", len(warns))
-            return
-
-        # Log file unreadable — tell the user once before falling back.
-        self._lappend(
-            "  ℹ  Could not read /var/log/lynis.log. Parsing live output instead.",
-            T["TEXT_DIM"]
-        )
-
-        # Fallback: parse the raw output text.
-        # Filter out log lines emitted by subprocesses Lynis invokes (e.g.
-        # fail2ban, auditd) — they match \bwarning\b but aren't Lynis findings.
-        # Noise looks like "<ISO-timestamp> <module>.<sub>[pid]: WARNING ...".
-        noise_re = re.compile(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}")
-        warn_count = 0
-        sugg_count = 0
-        summary_warns = None
-        summary_suggs = None
-        for line in text.splitlines():
-            clean = strip_ansi(line).strip()
-            if not clean:
+        warns, suggs = [], []
+        summary_warns = summary_suggs = index = tests = None
+        for raw in text.splitlines():
+            line = raw.strip()
+            if re.match(r"^\d{4}-\d{2}-\d{2}[ T]", line):
                 continue
-            if noise_re.match(clean):
-                continue  # Subprocess log line, not a Lynis finding
-            mw = re.search(r"\bWarnings?\b\s*[:=]\s*(\d+)", clean, re.I)
-            if mw:
-                summary_warns = int(mw.group(1))
-            ms = re.search(r"\bSuggestions?\b\s*[:=]\s*(\d+)", clean, re.I)
-            if ms:
-                summary_suggs = int(ms.group(1))
-
-            # Treat explicit warning lines as findings (case-insensitive).
-            # Skip summary counter lines like "Warnings : 5".
-            if re.search(r"\bwarning\b", clean, re.I) and not mw:
-                self._lappend(f"  ⚠  {clean}", T["WARN"])
-                warn_count += 1
-                self.findings.add_finding(
-                    clean[:60], "HARDENING", "MEDIUM", clean
-                )
-            elif re.search(r"\bsuggestion\b", clean, re.I) and not ms:
-                self._lappend(f"  ℹ  {clean}", T["TEXT_DIM"])
-                sugg_count += 1
-            # Try to extract hardening index from raw output
-            m = re.search(r"Hardening index\s*[:\|]\s*(\d+)", clean, re.I)
-            if m:
-                idx = int(m.group(1))
-                colour = T["OK"] if idx > 70 else (T["WARN"] if idx > 40 else T["DANGER"])
-                self._lappend(f"\n  Lynis Hardening Index: {idx} / 100", colour)
-
-        final_warns = summary_warns if summary_warns is not None else warn_count
-        final_suggs = summary_suggs if summary_suggs is not None else sugg_count
-        if summary_warns is not None and warn_count == 0 and summary_warns > 0:
-            self._lappend(
-                "  ℹ  Lynis reported warnings in summary; detailed warning lines were not exposed in live output.",
-                T["TEXT_DIM"]
-            )
-        self._lappend(f"\n── WARNINGS ({final_warns}) | SUGGESTIONS ({final_suggs}) ──", T["ACCENT"])
-        SESSION.log_scan("Lynis Full Audit", final_warns)
+            warning = re.search(r"\bWarnings?\s*(?:[:=]\s*(\d+)|\((\d+)\))", line, re.I)
+            suggestion = re.search(r"\bSuggestions?\s*(?:[:=]\s*(\d+)|\((\d+)\))", line, re.I)
+            if warning:
+                summary_warns = int(warning.group(1) or warning.group(2))
+            elif re.search(r"\bwarning\b", line, re.I):
+                warns.append(line)
+            if suggestion:
+                summary_suggs = int(suggestion.group(1) or suggestion.group(2))
+            elif re.search(r"\bsuggestion\b", line, re.I):
+                suggs.append(line)
+            match = re.search(r"Hardening index\s*[:|=]\s*(\d+)", line, re.I)
+            if match:
+                index = int(match.group(1))
+            match = re.search(r"Tests performed\s*[:=]\s*(\d+)", line, re.I)
+            if match:
+                tests = int(match.group(1))
+        for warning in warns:
+            self._lappend(warning, T["WARN"])
+            self.findings.add_finding(warning[:60], "HARDENING", "MEDIUM", warning)
+        for suggestion in suggs[:20]:
+            self._lappend(suggestion, T["TEXT_DIM"])
+            self.findings.add_finding(suggestion[:60], "HARDENING", "LOW", suggestion)
+        if summary_warns and not warns:
+            self.findings.add_finding("Lynis warning summary", "HARDENING", "MEDIUM",
+                                      f"Current attempt reports {summary_warns} warnings; details unavailable.")
+        if summary_suggs and not suggs:
+            self.findings.add_finding("Lynis suggestion summary", "HARDENING", "LOW",
+                                      f"Current attempt reports {summary_suggs} suggestions; details unavailable.")
+        complete = (index is not None and 0 <= index <= 100 and tests is not None and tests > 0
+                    and summary_warns is not None and summary_suggs is not None
+                    and summary_warns >= len(warns) and summary_suggs >= len(suggs))
+        if not complete:
+            self._lappend("Current Lynis output lacks a usable completion summary; evidence is incomplete.", T["WARN"])
+            return coverage_result("unknown", "Missing/empty/unrecognized current-attempt completion evidence.")
+        self._lappend(f"Current attempt: hardening index {index}/100; {summary_warns} warnings, {summary_suggs} suggestions.", T["TEXT_DIM"])
+        if summary_warns == 0 and summary_suggs == 0:
+            self.findings.add_finding("Lynis current attempt", "HARDENING", "INFO",
+                                      "No warnings/suggestions reported by this completed attempt; not certification.")
+        SESSION.log_scan("Lynis Full Audit", summary_warns)
+        return coverage_result("succeeded", "Current captured output has a recognized completion summary.")
 
 
 # ── Dedicated CVE results panel ───────────────────────────────────────────────
@@ -4946,7 +5114,8 @@ class CvePanel(QWidget, WorkerMixin):
         except Exception:
             return None
 
-    def scan_cve(self, on_complete=None, on_terminal=None, assessment_id=None):
+    @scan_operation
+    def scan_cve(self, on_complete=None, on_terminal=None, assessment_id=None, on_failed=None):
         """Find installed packages and check them against the CVE database."""
         if (getattr(self, "_assessment_owner", None) is not None
                 and assessment_id != self._assessment_owner):
@@ -4954,7 +5123,18 @@ class CvePanel(QWidget, WorkerMixin):
             if on_terminal:
                 on_terminal("skipped")
             return
-        self._scan_cve_done_cb = on_complete
+        owned = scan_owner(self) is not None
+        if owned and on_terminal is None:
+            def on_terminal(result):
+                state = result.get("outcome") if type(result) is dict else result
+                if state == "succeeded":
+                    if on_complete:
+                        on_complete()
+                else:
+                    self.status.setText(f"CVE scan incomplete: {state}. Results are not an all-clear.")
+                    if on_failed:
+                        on_failed()
+        self._scan_cve_done_cb = None if owned else on_complete
         self._cve_scan_serial += 1
         scan_id = self._cve_scan_serial
         self._cve_active_scan_id = scan_id
@@ -4969,7 +5149,7 @@ class CvePanel(QWidget, WorkerMixin):
             self.terminal.append_warn(msg)
             if on_terminal:
                 on_terminal(coverage_result("skipped", "Offline; CVE requests were not made."))
-            if on_complete:
+            if on_complete and not owned:
                 try:
                     on_complete()
                 finally:
@@ -5017,16 +5197,19 @@ class CvePanel(QWidget, WorkerMixin):
         self.terminal.append_info(f"Checking {len(targets)} packages...")
 
         w = HttpWorker(targets)
-        state = {"finished": False, "parse_failed": False}
+        state = {"finished": False, "parse_failed": False, "seen": set()}
         def result(pkg, data):
+            if pkg in state["seen"]:
+                return
+            state["seen"].add(pkg)
             try:
                 self._handle_cve_result(pkg, data, scan_id)
             except Exception as exc:
                 state["parse_failed"] = True
                 self.terminal.append_err(f"CVE result could not be processed: {exc}")
-        w.result_ready.connect(result if on_terminal else
-                               lambda pkg, data, sid=scan_id: self._handle_cve_result(pkg, data, sid))
-        w.finished_ok.connect(lambda: state.update(finished=True))
+        w.result_ready.connect(scan_slot(self, w, result if on_terminal else
+                               lambda pkg, data, sid=scan_id: self._handle_cve_result(pkg, data, sid), success=False, once=False))
+        w.finished_ok.connect(scan_slot(self, w, lambda: state.update(finished=True), success=True, once=True))
         if on_terminal:
             def finish_summary():
                 try:
@@ -5034,9 +5217,9 @@ class CvePanel(QWidget, WorkerMixin):
                 except Exception as exc:
                     state["parse_failed"] = True
                     self.terminal.append_err(f"CVE summary could not be processed: {exc}")
-            w.finished_ok.connect(finish_summary)
+            w.finished_ok.connect(scan_slot(self, w, finish_summary, success=True, once=True))
         else:
-            w.finished_ok.connect(lambda sid=scan_id: self._finish_cve_scan(sid))
+            w.finished_ok.connect(scan_slot(self, w, lambda sid=scan_id: self._finish_cve_scan(sid), success=True, once=True))
         if on_terminal:
             def terminal():
                 if scan_id != self._cve_active_scan_id:
@@ -5172,6 +5355,7 @@ class CvePanel(QWidget, WorkerMixin):
             if isinstance(w, HttpWorker):
                 w.cancel()
 
+    @scan_operation
     def scan_upgrades(self, on_complete=None, on_failed=None, on_terminal=None, assessment_id=None):
         """Check which packages have newer versions available.
         Uses DEBIAN_FRONTEND=noninteractive so apt never waits for user input."""
@@ -5181,8 +5365,16 @@ class CvePanel(QWidget, WorkerMixin):
             if on_terminal:
                 on_terminal("skipped")
             return
-        self._scan_upgrades_done_cb = on_complete
-        self._scan_upgrades_failed_cb = on_failed
+        owned = scan_owner(self) is not None
+        if owned and on_terminal is None:
+            def on_terminal(result):
+                state = result.get("outcome") if type(result) is dict else result
+                self.status.setText(f"Update scan coverage: {state}.")
+                callback = on_complete if state == "succeeded" else on_failed
+                if callback:
+                    callback()
+        self._scan_upgrades_done_cb = None if owned else on_complete
+        self._scan_upgrades_failed_cb = None if owned else on_failed
         # Clear any stale rows from a previous CVE scan — this panel is shared
         # between the "CVE" and "available updates" buttons, so the table must
         # reset every time the user switches.
@@ -5214,14 +5406,14 @@ class CvePanel(QWidget, WorkerMixin):
             except Exception as exc:
                 outcome["parse_failed"] = True
                 self.terminal.append_err(f"Update output could not be processed: {exc}")
-        w.output_ready.connect(parse if on_terminal else self._parse_upgrades)
-        w.error_ready.connect(self.terminal.append_err)
-        w.finished_ok.connect(lambda: self.status.setText(
-            "Update command finished; see assessment coverage." if on_terminal else "Update check complete."))
-        w.failed.connect(lambda: self.status.setText("Update check failed — see terminal output."))
+        w.output_ready.connect(scan_slot(self, w, parse if on_terminal else self._parse_upgrades, success=False, once=False))
+        w.error_ready.connect(scan_slot(self, w, self.terminal.append_err, success=False, once=False))
+        w.finished_ok.connect(scan_slot(self, w, lambda: self.status.setText(
+            "Update command finished; see assessment coverage." if on_terminal else "Update check complete."), success=True, once=True))
+        w.failed.connect(scan_slot(self, w, lambda: self.status.setText("Update check failed — see terminal output."), success=False, once=True))
         if on_terminal:
-            w.finished_ok.connect(lambda: outcome.update(value="succeeded"))
-            w.failed.connect(lambda: outcome.update(value="failed"))
+            w.finished_ok.connect(scan_slot(self, w, lambda: outcome.update(value="succeeded"), success=True, once=True))
+            w.failed.connect(scan_slot(self, w, lambda: outcome.update(value="failed"), success=False, once=True))
             def terminal():
                 quality = ("failed" if outcome["parse_failed"] else outcome["coverage"]
                            if outcome["value"] == "succeeded" else outcome["value"])
@@ -5231,8 +5423,8 @@ class CvePanel(QWidget, WorkerMixin):
                                        "Package list output verified." if quality == "succeeded" else "Update evidence incomplete.")
             self._start_assessment_worker(w, terminal, on_terminal)
         else:
-            w.finished_ok.connect(self._finish_upgrades_scan)
-            w.failed.connect(lambda: self._finish_upgrades_scan(succeeded=False))
+            w.finished_ok.connect(scan_slot(self, w, self._finish_upgrades_scan, success=True, once=True))
+            w.failed.connect(scan_slot(self, w, lambda: self._finish_upgrades_scan(succeeded=False), success=False, once=True))
             self._start_worker(w)
 
     def _finish_upgrades_scan(self, succeeded=True):
@@ -5397,6 +5589,7 @@ class ToolCard(QFrame):
                 f"color:{T['WARN']};font-size:{fs(-2)}px;font-weight:bold;"
             )
 
+    @scan_operation
     def _install(self):
         """Install the tool with confirmation."""
         if not has_internet():
@@ -5429,13 +5622,10 @@ class ToolCard(QFrame):
 
         self.terminal.append_cmd(f"sudo {' '.join(cmd)}")
         w = CommandWorker(cmd, sudo=True, timeout=180, password=sudo_password)
-        w.output_ready.connect(lambda t: self.terminal.append(t, T["OK"]))
-        w.error_ready.connect(self.terminal.append_err)
-        w.finished.connect(self._check_installed)
-        # Track worker manually for this simple case
-        w.finished.connect(lambda: self._workers.discard(w))
-        self._workers.add(w)
-        w.start()
+        w.output_ready.connect(scan_slot(self, w, lambda t: self.terminal.append(t, T["OK"]), success=False, once=False))
+        w.error_ready.connect(scan_slot(self, w, self.terminal.append_err, success=False, once=False))
+        w.finished.connect(scan_slot(self, w, self._check_installed, success=False, once=True))
+        WorkerMixin._start_worker(self, w)
 
     def _show_how_to_use(self):
         """Show a popup with setup and usage instructions for the tool."""
@@ -5472,6 +5662,7 @@ class ToolCard(QFrame):
         layout.addWidget(btns)
         dlg.exec()
 
+    @scan_operation
     def _run_tool(self):
         """Run the tool in the terminal panel."""
         cmd_parts = self.tool["run"].split()
@@ -5494,11 +5685,9 @@ class ToolCard(QFrame):
         w = CommandWorker(
             cmd_parts, sudo=use_sudo, timeout=30, password=sudo_password
         )
-        w.output_ready.connect(lambda t: self.terminal.append(t))
-        w.error_ready.connect(self.terminal.append_err)
-        w.finished.connect(lambda: self._workers.discard(w))
-        self._workers.add(w)
-        w.start()
+        w.output_ready.connect(scan_slot(self, w, lambda t: self.terminal.append(t), success=False, once=False))
+        w.error_ready.connect(scan_slot(self, w, self.terminal.append_err, success=False, once=False))
+        WorkerMixin._start_worker(self, w)
 
 
 class ScheduleScanDialog(QDialog):
@@ -6136,6 +6325,7 @@ class UndoPanel(QWidget, WorkerMixin):
         ]
         self.detail.setPlainText("\n".join(lines))
 
+    @scan_operation
     def _run_undo(self, entry):
         """Confirm fresh stored data, durably claim its ID, then dispatch once."""
         record_id = entry.get("record_id") if type(entry) is dict else None
@@ -6534,7 +6724,7 @@ class SideBar(QWidget, WorkerMixin):
         prior = getattr(self.findings, "_assessment_coverage", None)
         if type(prior) is dict:
             prior["active"] = True  # Replaced evidence is not a complete seven-step assessment.
-        self.findings.clear_findings()
+        self.findings.clear_findings(**scan_join(self))
         self.terminal.output.clear()
         self.terminal.append(
             f"⏳  Please wait — running: {scan_name}...", T["ACCENT"]
@@ -6544,13 +6734,20 @@ class SideBar(QWidget, WorkerMixin):
 
     def _run_cmd(self, cmd, label, on_output=None, show_output=True, on_terminal=None):
         """Run a command in a background thread, output to terminal."""
+        if on_terminal is None and scan_owner(self) is not None:
+            def on_terminal(result):
+                state = result.get("outcome") if type(result) is dict else result
+                if state == "succeeded":
+                    self._post_scan_check()
+                else:
+                    self._scan_failed()
         self.terminal.append_cmd(" ".join(cmd))
         w = CommandWorker(cmd)
         if show_output:
-            w.output_ready.connect(lambda t: self.terminal.append(t))
-        w.error_ready.connect(self.terminal.append_err)
+            w.output_ready.connect(scan_slot(self, w, lambda t: self.terminal.append(t), success=False, once=False))
+        w.error_ready.connect(scan_slot(self, w, self.terminal.append_err, success=False, once=False))
         outcome = {"value": "unknown", "parse_failed": False,
-                   "coverage": "succeeded" if cmd == ["deborphan"] else "unknown"}
+                   "coverage": "succeeded" if cmd == ["deborphan"] or on_output is None else "unknown"}
         if on_output:
             if on_terminal:
                 def parse(text):
@@ -6561,24 +6758,24 @@ class SideBar(QWidget, WorkerMixin):
                     except Exception as exc:
                         outcome["parse_failed"] = True
                         self.terminal.append_err(f"{label} parsing failed: {exc}")
-                w.output_ready.connect(parse)
+                w.output_ready.connect(scan_slot(self, w, parse, success=False, once=False))
             else:
-                w.output_ready.connect(on_output)
+                w.output_ready.connect(scan_slot(self, w, on_output, success=False, once=False))
         if on_terminal:
-            w.finished_ok.connect(lambda: self.terminal.append_info(f"{label}: command finished; checking coverage."))
+            w.finished_ok.connect(scan_slot(self, w, lambda: self.terminal.append_info(f"{label}: command finished; checking coverage."), success=True, once=True))
         else:
-            w.finished_ok.connect(lambda: self.terminal.append_ok(f"{label} complete."))
+            w.finished_ok.connect(scan_slot(self, w, lambda: self.terminal.append_ok(f"{label} complete."), success=True, once=True))
         if on_terminal:
-            w.finished_ok.connect(lambda: outcome.update(value="succeeded"))
-            w.failed.connect(lambda: outcome.update(value="failed"))
+            w.finished_ok.connect(scan_slot(self, w, lambda: outcome.update(value="succeeded"), success=True, once=True))
+            w.failed.connect(scan_slot(self, w, lambda: outcome.update(value="failed"), success=False, once=True))
             self._start_assessment_worker(w, lambda: coverage_result(
                 "failed" if outcome["parse_failed"] else outcome["coverage"]
                 if outcome["value"] == "succeeded" else outcome["value"],
                 "Command output recognized." if outcome["value"] == "succeeded" and outcome["coverage"] == "succeeded"
                 else "Command failed or evidence could not be fully interpreted."), on_terminal)
         else:
-            w.finished_ok.connect(self._post_scan_check)
-            w.failed.connect(self._scan_failed)
+            w.finished_ok.connect(scan_slot(self, w, self._post_scan_check, success=True, once=True))
+            w.failed.connect(scan_slot(self, w, self._scan_failed, success=False, once=True))
             self._start_worker(w)
 
     def _scan_failed(self):
@@ -6596,6 +6793,7 @@ class SideBar(QWidget, WorkerMixin):
         self.findings.show_all_ok_banner()
 
     # ── Scan: unused software ─────────────────────────────────────────────
+    @scan_operation
     def _scan_unused(self):
         self._pre_scan(L("btn_unused"), "scan", "unused")
         self._do_scan_unused()
@@ -6646,6 +6844,7 @@ class SideBar(QWidget, WorkerMixin):
         return "partial" if invalid and count else "unknown" if invalid else "succeeded"
 
     # ── Scan: open ports ──────────────────────────────────────────────────
+    @scan_operation
     def _scan_network(self):
         self._pre_scan(L("btn_network"), "scan", "network")
         self._do_scan_network()
@@ -6717,6 +6916,7 @@ class SideBar(QWidget, WorkerMixin):
         return "partial" if invalid and count else "unknown" if invalid or not header else "succeeded"
 
     # ── Scan: risky services ──────────────────────────────────────────────
+    @scan_operation
     def _scan_services(self):
         self._pre_scan(L("btn_services"), "scan", "services")
         self._do_scan_services()
@@ -6764,6 +6964,7 @@ class SideBar(QWidget, WorkerMixin):
             self._post_scan_check()
 
     # ── Scan: all installed (legacy, kept for internal use) ──────────────
+    @scan_operation
     def _scan_installed(self):
         self._pre_scan(L("btn_installed"), "scan", "installed")
         if PKG_MGR == "apt":
@@ -6775,6 +6976,7 @@ class SideBar(QWidget, WorkerMixin):
         self._run_cmd(cmd, "Installed package list")
 
     # ── Scan: OS pre-installed (not in apt-mark showmanual) ───────────────
+    @scan_operation
     def _scan_os_installed(self):
         """List packages that came with the OS — not explicitly installed by the user.
         These are the difference between all packages and apt-mark showmanual output."""
@@ -6823,6 +7025,7 @@ class SideBar(QWidget, WorkerMixin):
         )
 
     # ── Scan: user installed (apt-mark showmanual) ────────────────────────
+    @scan_operation
     def _scan_user_installed(self):
         """List packages the user deliberately installed — from apt-mark showmanual.
         Each result has a REMOVE button so the user can clean up intentionally."""
@@ -6859,14 +7062,12 @@ class SideBar(QWidget, WorkerMixin):
 
     # ── Scan: full scan (all of the above) ────────────────────────────────
     def _run_full_scan(self):
-        self._pre_scan("Full System Scan", "scan", "fullscan")
-        self._do_scan_unused()
-        # Stagger the scans slightly so they don't all start simultaneously
-        QTimer.singleShot(1000,  self._do_scan_network)
-        QTimer.singleShot(2000,  self._do_scan_services)
+        """Keep the legacy three-check scope, using explicit completion boundaries."""
+        return self.run_everything(_legacy_full=True)
 
     # ── Scan: RUN EVERYTHING — assessment sequence ────────────────────────
-    def run_everything(self, on_complete=None):
+    @scan_operation
+    def run_everything(self, on_complete=None, _legacy_full=False):
         """Seven completion-driven, non-privileged steps; no timer polling."""
         if getattr(self, "_re_run", None) and self._re_run["active"]:
             self.terminal.append_warn("RUN EVERYTHING is already running.")
@@ -6875,6 +7076,7 @@ class SideBar(QWidget, WorkerMixin):
             self.terminal.append_warn("Wait for existing scans to finish before RUN EVERYTHING.")
             return
         run_id = str(uuid.uuid4())
+        join = scan_join(self)
         def synchronous(function, done):
             done(function(self.terminal, self.findings, with_coverage=True))
         steps = [
@@ -6884,10 +7086,12 @@ class SideBar(QWidget, WorkerMixin):
             ("Quick security checks", lambda on_terminal: synchronous(run_quick_checks, on_terminal)),
             ("Hardware temperatures", lambda on_terminal: synchronous(run_temperature_check, on_terminal)),
             ("CVE vulnerabilities", lambda on_terminal: self.cve_panel.scan_cve(
-                on_terminal=on_terminal, assessment_id=run_id)),
+                on_terminal=on_terminal, assessment_id=run_id, **join)),
             ("Available updates", lambda on_terminal: self.cve_panel.scan_upgrades(
-                on_terminal=on_terminal, assessment_id=run_id)),
+                on_terminal=on_terminal, assessment_id=run_id, **join)),
         ]
+        if _legacy_full:
+            steps = steps[:3]  # Legacy full-scan never adds network CVE/update checks.
         self._re_run = {"id": run_id, "active": True, "finalized": False,
                         "steps": steps, "outcomes": [], "waiting": None,
                         "advancing": False, "on_complete": on_complete,
@@ -6902,7 +7106,7 @@ class SideBar(QWidget, WorkerMixin):
         self.findings.hide_all_ok_banner()
         self._pending_section_action = ("scan", "fullscan")
         self.stack.setCurrentIndex(0)
-        self.terminal.append_info("RUN EVERYTHING — seven assessment steps in sequence.")
+        self.terminal.append_info(f"Scan sequence — {len(steps)} steps in explicit completion order.")
         self._re_advance(run_id)
 
     def _re_step_done(self, run_id, index, outcome):
@@ -6940,7 +7144,7 @@ class SideBar(QWidget, WorkerMixin):
                     return
                 name, start = run["steps"][index]
                 run["waiting"] = index  # Set BEFORE start: callbacks can be synchronous.
-                self.terminal.append_info(f"▶ Step {index + 1}/7: {name}")
+                self.terminal.append_info(f"▶ Step {index + 1}/{len(run['steps'])}: {name}")
                 done = lambda outcome, i=index: self._re_step_done(run_id, i, outcome)
                 try:
                     start(on_terminal=done)
@@ -6973,7 +7177,7 @@ class SideBar(QWidget, WorkerMixin):
         self.cve_panel._assessment_owner = None
         self.setEnabled(run["sidebar_enabled"])
         self.cve_panel.setEnabled(run["panel_enabled"])
-        self.terminal.append_info("RUN EVERYTHING finished — all seven steps reached an outcome.")
+        self.terminal.append_info(f"Scan sequence finished — all {len(run['steps'])} steps reached an outcome.")
         if all(item["outcome"] == "succeeded" for item in run["outcomes"]):
             self._post_scan_check()
         else:
@@ -6982,17 +7186,19 @@ class SideBar(QWidget, WorkerMixin):
             callback()
 
     # ── Security checks ───────────────────────────────────────────────────
+    @scan_operation
     def _quick_checks(self):
         self._pre_scan(L("btn_quick"), "checks", "quick")
         run_quick_checks(self.terminal, self.findings)
         self._post_scan_check()
 
+    @scan_operation
     def _run_lynis(self):
         """Run Lynis audit — switch to the Lynis page to show results."""
         self._pre_scan(L("btn_lynis"), "checks", "lynis")
         self.stack.setCurrentIndex(2)  # Page 2 = LynisPanel
         self.lynis_panel.run_lynis(
-            on_complete=self._post_scan_check, on_failed=self._scan_failed
+            on_complete=self._post_scan_check, on_failed=self._scan_failed, **scan_join(self)
         )
 
     def _guided_wizard(self):
@@ -7000,12 +7206,14 @@ class SideBar(QWidget, WorkerMixin):
         GuidedWizard(self.terminal, self).exec()
         self._mark_section_action_done("checks", "wizard")
 
+    @scan_operation
     def _scan_temperature(self):
         """Hardware temperature scan via lm-sensors. Read-only, no sudo."""
         self._pre_scan(L("btn_temperature"), "checks", "temperature")
         run_temperature_check(self.terminal, self.findings)
         self._post_scan_check()
 
+    @scan_operation
     def _scan_drives(self):
         """Drive SMART health scan. Needs sudo; stays read-only (no -t)."""
         self._pre_scan(L("btn_drives"), "checks", "drives")
@@ -7013,18 +7221,20 @@ class SideBar(QWidget, WorkerMixin):
         self._post_scan_check()
 
     # ── CVE checks ────────────────────────────────────────────────────────
+    @scan_operation
     def _scan_cve(self):
         """Run CVE check — switch to CVE page to show results."""
         self._pre_scan(L("btn_cve"), "cve", "cve")
         self.stack.setCurrentIndex(1)  # Page 1 = CvePanel
-        self.cve_panel.scan_cve(on_complete=self._post_scan_check)
+        self.cve_panel.scan_cve(on_complete=self._post_scan_check, on_failed=self._scan_failed, **scan_join(self))
 
+    @scan_operation
     def _scan_upgrades(self):
         """Check for available updates — switch to CVE page."""
         self._pre_scan(L("btn_upgrades"), "cve", "upgrades")
         self.stack.setCurrentIndex(1)  # Page 1 = CvePanel
         self.cve_panel.scan_upgrades(
-            on_complete=self._post_scan_check, on_failed=self._scan_failed
+            on_complete=self._post_scan_check, on_failed=self._scan_failed, **scan_join(self)
         )
 
     # ── Tools and undo ────────────────────────────────────────────────────
@@ -8009,6 +8219,7 @@ class AuditDashboard(QMainWindow):
             "Nothing changes on your system until you confirm an action."
         )
 
+    @scan_operation
     def _detect_profile(self):
         """Auto-detect the system profile and offer confirmation dialog."""
         detected, conf = detect_profile()

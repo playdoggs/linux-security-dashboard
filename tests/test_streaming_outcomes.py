@@ -163,7 +163,7 @@ class StreamingOutcomes(unittest.TestCase):
                                           _post_scan_check=Mock(), _scan_failed=Mock())
                 panel = SimpleNamespace(status=Mock(), terminal=Mock(), output=Mock(),
                                         _get_sudo_password=Mock(return_value=b'fake'),
-                                        _lappend=Mock(), _parse_lynis_output=Mock())
+                                        _lappend=Mock(), _parse_lynis_partial=Mock(), _parse_lynis_output=Mock(return_value={'outcome':'succeeded'}))
                 panel.run_lynis = lambda **kwargs: audit(panel, **kwargs)
                 sidebar.lynis_panel = panel
                 workers = []

@@ -207,3 +207,20 @@ or unsupported SQLite stores produce visible errors, not replacement stores.
 No persistent database in the user's home has been created or tested during
 validation; all databases and command outcomes used mocks/temporary resources.
 The full application/privileged paths have not been run.
+
+## Increment 4 Stage 4E GUI result boundary (pending acceptance review)
+
+Scan ownership isolates shared GUI findings, coverage, status and report inputs.
+A current-operation UUID plus live worker identity gates scan callbacks; retired
+results cannot update a newer operation. Busy scans/manual mutations are rejected
+before authorization prompts. This is not an OS security boundary, a cross-process
+lock or protection against malicious code running inside this process.
+
+Lynis completion evidence is current successful captured output only; explicit
+partial observations from failed attempts can be retained without declaring success.
+Shared logs and the
+privileged `sudo -n cat` fallback are no longer used. Unsupported/missing completion
+evidence remains unknown and partial findings remain visible. Command allowlists,
+SQLite undo claims/outcomes and existing user/sudo confirmation are preserved.
+No process-group kill, recursive termination or additional privileged operation was
+introduced. Other processes can still change the host during assessment.

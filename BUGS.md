@@ -72,6 +72,10 @@ Last reviewed: 2026-05-03
 
 ### B-007 — `LynisPanel._read_lynis_log` sudo-fallback can fail silently if the audit took longer than the sudo timestamp
 
+- **Stage 4E status (pending acceptance):** shared-log reading and sudo-cat fallback
+  were removed. Current-attempt captured output is the only evidence source.
+  The original observation below is retained as historical review evidence.
+
 - **Where:** [linux-security-dashboard.py:3886-3897](linux-security-dashboard.py#L3886-L3897). `sudo -n cat /var/log/lynis.log` only succeeds while the sudo timestamp is fresh. Default `timestamp_timeout` is 5 minutes; Lynis with `--quick` typically finishes in 60-90 s, so usually OK. But on slow systems, or if the user paused the dialog, the cached timestamp may have expired.
 - **Repro:** Force-edit `/etc/sudoers.d/zz-test` to `Defaults timestamp_timeout=0` (don't actually do this; mention as a thought experiment). Run Lynis. Direct read of `/var/log/lynis.log` fails with PermissionError; sudo-fallback also fails because no cached timestamp.
 - **Result today:** The fallback silently swallows the error and the panel falls through to "live output" parsing ([3958-4012](linux-security-dashboard.py#L3958-L4012)). The user gets a degraded but non-empty result. Not a crash; a silent quality drop.

@@ -96,7 +96,7 @@ Other component line ranges below reflect the earlier review baseline.
 | `EXPLANATIONS` / `GLOSSARY` / `ExplainDialog(QDialog)` | [1918-2091](linux-security-dashboard.py#L1918-L2091) | Per-finding everyday-language explanation with glossary hits |
 | `FindingsTable(QWidget, WorkerMixin)` | [2095-2644](linux-security-dashboard.py#L2095-L2644) | Main findings table; dedupe, risk sort, action cell builder, search filter, ignore, action+verify pipeline |
 | `GuidedWizard(QDialog, WorkerMixin)` | [3157-3735](linux-security-dashboard.py#L3157-L3735) | 12 step-by-step hardening fixes with idempotent re-checks |
-| `LynisPanel(QWidget, WorkerMixin)` | [3738-4012](linux-security-dashboard.py#L3738-L4012) | Streams Lynis output; parses `/var/log/lynis.log` (preferred) or live text fallback |
+| `LynisPanel(QWidget, WorkerMixin)` | [3738-4012](linux-security-dashboard.py#L3738-L4012) | Streams current-attempt Lynis stdout; shared logs are never assessment evidence |
 | `CvePanel(QWidget, WorkerMixin)` | [4016-4340](linux-security-dashboard.py#L4016-L4340) | CVE table + offline gating + apt-list-upgradable; shared by both buttons |
 | `ToolCard(QFrame)` | [4344-4545](linux-security-dashboard.py#L4344-L4545) | Single recommended-tool card with INSTALL / HELP / RUN |
 | `ScheduleScanDialog(QDialog)` | [4548-4716](linux-security-dashboard.py#L4548-L4716) | User-crontab installer for periodic upgradable-package check |
@@ -182,8 +182,8 @@ summary callback once after all seven outcomes, with no waiting step.
 The run preserves main findings and terminal evidence. It refuses to begin while
 existing sidebar/CVE/Lynis workers are active, rejects repeated requests, and
 temporarily disables sidebar/CVE controls. A CvePanel ownership token also rejects
-conflicting programmatic scan starts. Controls and ownership are restored before
-the summary callback. Existing CVE/update detail-table replacement is unchanged.
+conflicting programmatic scan starts. Controls are restored before the summary callback; shared scan ownership remains
+held through actual thread completion and callback cleanup. Existing CVE/update detail-table replacement is unchanged.
 CVE session bookkeeping runs before dispatch. `_start_assessment_worker` connects
 its terminal acknowledgement before startup and distinguishes pre-dispatch errors
 from exceptions after a worker starts (including a fast exit with queued signals).
@@ -222,9 +222,63 @@ no host locale or security settings are changed.
 RiskTracker calculations and existing severity thresholds are unchanged. CVE
 records below those thresholds are counted separately in coverage reporting, so
 zero risk score is never treated as proof of no findings. Coverage is a scan-time
-snapshot, not ongoing monitoring or certification. General panel overlap remains
-Stage 4E. Lynis and drive checks remain outside RUN EVERYTHING.
+snapshot, not ongoing monitoring or certification. General panel overlap is protected by the Stage 4E ownership model below. Lynis and drive checks remain outside RUN EVERYTHING.
 
+
+## Scan isolation (Increment 4 Stage 4E)
+
+`FindingsTable` creates one GUI-thread `ScanOwnership` shared through its terminal.
+Public scan entries acquire a UUID lease before clearing evidence or asking for
+sudo. Conflicting requests return with a terminal explanation; they never cancel
+or replace active work. Internal continuations explicitly join the current lease.
+Expired continuation tokens cannot start a new operation. RUN EVERYTHING retains
+its separate run UUID/index guards and exactly seven default steps. The legacy
+full-scan entry retains three steps, using completion callbacks instead of timers.
+
+A worker record captures the lease and worker UUID before signal connection.
+`scan_slot` filters output, result, status and completion callbacks by that live
+record; logical completion slots are consumed once. Duplicate CVE package responses
+are ignored. `_start_worker` holds strong references before dispatch and retires
+the record only on actual `QThread.finished`, after result/outcome handlers. A
+pre-start failure releases a non-running worker; a post-start error retains the
+lease until its real completion. Parser/setup errors become incomplete outcomes.
+No new polling, process termination or privileged capability is added.
+
+Individual sidebar and direct CVE/update/Lynis entries, quick/temperature/drive
+checks, inventories and legacy full scan share the lease. Clearing findings or the
+terminal, changing profile, tool runs/installs and manual remediation/undo are also
+admitted through it because they can change shared evidence or its interpretation.
+Existing confirmations, operation validators and SQLite lifecycle remain in place;
+undo outcome persistence is not discarded by a stale-result filter. A blocked
+startup profile prompt can be retried via CHANGE PROFILE; it is not auto-requeued.
+
+Lynis no longer reads `/var/log/lynis.log` or falls back to `sudo -n cat`. Only
+successful, non-truncated output from the authorized worker is parsed for
+completion after its thread finishes. A separate partial-observation handler can
+retain explicit warnings from failed/truncated attempts without success parsing. Recognized warning/suggestion counts, a valid hardening index and
+positive performed-test count are required for a complete attempt. Empty, missing,
+failed or unsupported-format output remains unknown. Partial warnings/findings are
+retained; a stale or readable empty shared log cannot create a clean result.
+
+Acceptance rollback corrections protect every admission preparation action after
+lease acquisition. A preparation failure restores the prior coverage/banner where
+possible and always unwinds that entry's depth/token. A pre-worker run setup failure
+restores its saved controls and aborts the unstarted run; a dispatched worker keeps
+ownership. Restoration errors are reported without replacing the original exception.
+
+Worker cleanup connections and both reference registrations form one protected
+startup transaction. Failure before start disconnects registered cleanup slots and
+rolls back partial additions; cleanup actions are idempotent. Once start is called,
+actual finished/running state distinguishes pre-start failure from dispatched or
+queued completion. In uncertain Qt state, references remain for actual completion.
+The assessment adapter recognizes completed starter rollback to avoid duplicate
+`deleteLater`; an overridden starter still receives conservative fallback cleanup.
+No worker is terminated to solve rollback errors.
+
+This is GUI-state isolation, not an OS-wide lock or atomic view of the host.
+Other processes can still change the system. Stage 4F should exercise full GUI
+flows, closing widgets with active threads, cooperative cancellation/HTTP deadlines
+and supported real Lynis versions; those are not proven by mocked widgets.
 
 ---
 
@@ -255,7 +309,7 @@ All under `$HOME` — **no root required for normal app state**.
 | `~/.audit-dashboard-schedule.log` | text | crontab-installed entry [4651-4655](linux-security-dashboard.py#L4651-L4655) | Output of `apt list --upgradable` appended by user cron |
 | `~/audit-report-<host>-<YYYYMMDD-HHMM>.html` | HTML | `RunEverythingSummaryDialog._open_report` [6360-6383](linux-security-dashboard.py#L6360-L6383) | `_generate_report` (toolbar) prompts via `QFileDialog` instead |
 
-System-side reads (read-only): `/etc/os-release`, `/etc/ssh/sshd_config`, `/etc/sysctl.conf`, `/proc/cpuinfo`, `/proc/meminfo`, `/proc/uptime`, `/var/lib/apt/periodic/update-success-stamp`, `/var/log/lynis.log`.
+System-side reads (read-only): `/etc/os-release`, `/etc/ssh/sshd_config`, `/etc/sysctl.conf`, `/proc/cpuinfo`, `/proc/meminfo`, `/proc/uptime`, `/var/lib/apt/periodic/update-success-stamp`.
 
 ---
 

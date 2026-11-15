@@ -83,3 +83,18 @@ is still dispatched work, not a pre-start failure. Exceptions after the adapter'
 start call also retain that boundary. Terminal outcome calculation failures become
 failed outcomes; UUID/index guards still consume acknowledgement once. Ordinary
 worker starts and command success/failure signals are unchanged.
+
+## Shared scan ownership (Stage 4E)
+
+Public entry → acquire lease UUID → invalidate prior coverage if replacing its
+scope → bind worker UUID/guarded slots → track/start → results while lease is live →
+actual Qt finished → completion handling → retire worker → release when no nested
+entry or worker remains. Busy requests return feedback before clearing or prompts.
+RUN EVERYTHING joins child CVE/update operations explicitly; no stale continuation
+can reacquire ownership. Individual CVE/update completion now waits for actual thread
+completion and routes usable vs incomplete evidence to the appropriate callback.
+
+Lynis installation and audit are separate workers sharing one admitted operation.
+Audit parsing uses only that worker's captured stdout; shared logs/sudo-cat fallback
+were removed. No successful/clean message is generated from an empty or unsupported
+summary. Native worker cleanup is unconditional even when result updates are rejected.

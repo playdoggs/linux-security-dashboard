@@ -5,6 +5,8 @@ Every subprocess call is mocked; these tests never invoke sudo or host commands.
 """
 import ast
 import logging
+from functools import wraps
+import uuid
 import re
 import shlex
 from pathlib import Path
@@ -19,15 +21,15 @@ SOURCE = Path(__file__).resolve().parents[1] / "linux-security-dashboard.py"
 TREE = ast.parse(SOURCE.read_text())
 CLASSES = {node.name: node for node in TREE.body if isinstance(node, ast.ClassDef)}
 NS = dict(QThread=QThread, pyqtSignal=pyqtSignal, subprocess=subprocess,
-          logging=logging, re=re, shlex=shlex, PKG_MGR="apt",
+          logging=logging, wraps=wraps, uuid=uuid, re=re, shlex=shlex, PKG_MGR="apt",
           T={"OK": "green"}, strip_ansi=lambda text: text)
 for node in TREE.body:
-    name = node.name if isinstance(node, ast.FunctionDef) else None
+    name = node.name if isinstance(node, (ast.FunctionDef, ast.ClassDef)) else None
     if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
         name = node.targets[0].id
     if name in {"UNDO_SERVICE_TARGETS", "UNDO_PACKAGE_RE", "build_undo_argv",
                 "make_undo_operation", "undo_presentation", "ASSESSMENT_STEPS", "COVERAGE_STATES",
-                "coverage_result", "assessment_complete", "assessment_verdict", "assessment_details", "probe_package"}:
+                "coverage_result", "assessment_complete", "assessment_verdict", "assessment_details", "probe_package", "ScanOwnership", "scan_owner", "scan_join", "scan_operation", "bind_scan_worker", "scan_slot"}:
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(SOURCE), "exec"), NS)
 
 
