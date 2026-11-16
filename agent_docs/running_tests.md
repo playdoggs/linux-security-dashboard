@@ -283,3 +283,26 @@ remain in the same suite. Two earlier synchronous CommandOutcomes fixtures now
 explicitly model native completion after calling `run()`; calling `run()` alone
 never emits Qt's automatic `finished` notification. The existing real-thread
 partial-failure test continues to use actual Qt completion.
+
+## Qt / GNOME schema startup compatibility
+
+`tests/test_qt_platform_theme.py` extracts the production startup policy without
+importing the GUI module. Nine mocked tests cover the affected schema, explicit
+GTK3 versus other theme choices, other platforms/desktops, legacy-compatible
+schemas, missing/failed/stalled probes and ordering before QApplication creation.
+Only the read-only `gsettings list-keys` command is permitted by the policy.
+
+Actual desktop probes on Ubuntu GNOME with Qt 6.10.2 reproduced the exact fatal
+missing `antialiasing` key under automatic GTK3 theme selection. A debugger trace
+showed `libqgtk3` -> GTK initialization -> GDK3 -> `g_settings_get_enum`. The same
+isolated Qt dialog succeeded with process-local `QT_QPA_PLATFORMTHEME=generic`,
+including expansion of error details. These were actual Qt GUI runs, not mocks.
+
+An actual production main/dashboard smoke run with the new policy also succeeded:
+all five colour themes, all five pages and expanded QMessageBox error details.
+That smoke fixture used a temporary HOME/config/cache/state, memory-only GSettings,
+a stub first-run wizard and host probes, disabled worker starts, and automatic
+closure. It validates real Qt widgets/startup while protecting existing user data;
+it is not a scan, privileged-operation or unmodified end-to-end application test.
+No system packages, schemas, GNOME values or existing preferences were changed.
+Other desktop/Qt versions and explicit third-party platform themes are unverified.

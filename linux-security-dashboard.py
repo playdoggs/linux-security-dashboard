@@ -8610,11 +8610,41 @@ UNDO COMMANDS (require confirmation dialog before running):
             self.terminal.append_err(f"Could not read log file: {e}")
 
 
+def configure_qt_platform_theme():
+    """Bypass the GTK3/GDK legacy-font-schema crash in affected GNOME sessions.
+
+    Qt selects its platform theme during QApplication construction, before our
+    Fusion widget style is applied. Change only this process's environment;
+    preserve explicitly selected non-GTK themes and other desktop platforms.
+    """
+    if not sys.platform.startswith("linux"):
+        return False
+    desktops = set(os.environ.get("XDG_CURRENT_DESKTOP", "").lower().split(":"))
+    if not desktops.intersection({"gnome", "ubuntu"}):
+        return False
+    selected = os.environ.get("QT_QPA_PLATFORMTHEME", "").strip().lower()
+    if selected not in ("", "gtk3"):
+        return False
+    try:
+        result = subprocess.run(
+            ["gsettings", "list-keys", "org.gnome.settings-daemon.plugins.xsettings"],
+            capture_output=True, text=True, timeout=2, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return False  # Unverified schema: do not override desktop integration.
+    keys = set(result.stdout.split())
+    expected = {"disabled-gtk-modules", "enabled-gtk-modules", "overrides"}
+    if result.returncode or not expected.issubset(keys) or "antialiasing" in keys:
+        return False
+    os.environ["QT_QPA_PLATFORMTHEME"] = "generic"
+    return True
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 def main():
     """Application entry point. Sets up Qt, shows the startup wizard
     on first run, then opens the main window."""
 
+    configure_qt_platform_theme()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.undo_panel_ref = None  # Will be set once the main window is built

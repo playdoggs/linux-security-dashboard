@@ -111,6 +111,21 @@ After installing, launch from your desktop menu (**Linux Security Dashboard**) o
 
 ---
 
+### Ubuntu / GNOME startup compatibility
+
+Some GTK3/GDK versions request the removed GNOME XSettings `antialiasing` key
+when Qt initializes its GTK platform theme. Before constructing QApplication, the
+app checks schema key names (read-only, bounded to two seconds). In Linux
+GNOME/Ubuntu sessions with the affected schema, it selects Qt's generic platform
+theme for this process only. Explicit non-GTK theme selections and other desktops
+are preserved; an unavailable/unrecognized schema probe leaves selection unchanged.
+
+The app's Fusion style, five colour themes and navigation remain available.
+GTK-provided native dialogs, icons or font integration may differ. No packages,
+GNOME schemas or persistent user settings are changed. A manual process-local
+`QT_QPA_PLATFORMTHEME=generic python3 linux-security-dashboard.py` remains available
+for diagnosing other GTK theme configurations.
+
 ## Distro Support
 
 | Distro | Status |

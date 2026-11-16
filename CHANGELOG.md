@@ -5,6 +5,10 @@ All notable changes to Linux Security Dashboard are documented here.
 ## [Unreleased] — v4.2.1
 
 ### Changed
+- Ubuntu/GNOME startup: bypass the GTK3/GDK legacy `antialiasing` schema crash
+  with a process-local generic Qt platform theme before QApplication construction.
+  Scope the fallback to the affected schema/session and preserve explicit non-GTK
+  choices, other desktops and the dashboard's existing Fusion colour themes.
 - Stage 4F guided-fix sequencing correction: success/failure signals now record
   command outcomes without advancing/restoring controls until Qt `finished`.
   Preserve immediate recovery for confirmed pre-dispatch startup failures.
