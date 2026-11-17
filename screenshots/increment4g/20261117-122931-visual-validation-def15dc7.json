@@ -1,0 +1,16 @@
+{
+  "checks": [
+    "normal/small geometry, priority columns, complete escaped tooltip and necessary-only scrolling passed",
+    "search, sorting, explanation/double-click and original action routing passed (actions intercepted)",
+    "short-dialog: text preserved, dimensions bounded, scrolling/Close/Escape passed",
+    "long-dialog: text preserved, dimensions bounded, scrolling/Close/Escape passed"
+  ],
+  "screenshots": [
+    "screenshots/increment4g/20261117-122930-enterprise-workspace-findings-1440x900-fa82bf4e.png",
+    "screenshots/increment4g/20261117-122930-enterprise-workspace-findings-1100x700-95ff4347.png",
+    "screenshots/increment4g/20261117-122930-hybrid-professional-findings-1440x900-12aefba6.png",
+    "screenshots/increment4g/20261117-122930-hybrid-professional-findings-1100x700-0cdf8ea3.png",
+    "screenshots/increment4g/20261117-122931-short-dialog-87fb6332.png",
+    "screenshots/increment4g/20261117-122931-long-dialog-9f7e1313.png"
+  ]
+}

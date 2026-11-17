@@ -1,0 +1,30 @@
+{
+  "checks": [
+    "seven destinations: no execution, exclusive accessible selection",
+    "legacy routing preserves controller identities",
+    "feature placement, linked control disable/restore and Qt keyboard activation passed",
+    "navigation/activity during real QThread execution preserves ownership and evidence",
+    "all seven themes preserve findings, score and incomplete coverage",
+    "keyboard Tab traversal passed",
+    "existing explanation dialog and normal shutdown passed"
+  ],
+  "screenshots": [
+    "screenshots/stage3/20261117-121225-enterprise-workspace-overview-6ca60af5.png",
+    "screenshots/stage3/20261117-121225-enterprise-workspace-assets-dab1a5e3.png",
+    "screenshots/stage3/20261117-121225-enterprise-workspace-assessments-ee361a79.png",
+    "screenshots/stage3/20261117-121225-enterprise-workspace-findings-b0f657b3.png",
+    "screenshots/stage3/20261117-121225-enterprise-workspace-remediation-1124e70d.png",
+    "screenshots/stage3/20261117-121225-enterprise-workspace-reports-ec25b113.png",
+    "screenshots/stage3/20261117-121226-enterprise-workspace-settings-137dad87.png",
+    "screenshots/stage3/20261117-121226-hybrid-professional-overview-7e76374f.png",
+    "screenshots/stage3/20261117-121226-hybrid-professional-assets-7b421c41.png",
+    "screenshots/stage3/20261117-121226-hybrid-professional-assessments-8bebccf9.png",
+    "screenshots/stage3/20261117-121226-hybrid-professional-findings-0cd4f107.png",
+    "screenshots/stage3/20261117-121226-hybrid-professional-remediation-db102dd8.png",
+    "screenshots/stage3/20261117-121226-hybrid-professional-reports-9106bf96.png",
+    "screenshots/stage3/20261117-121227-hybrid-professional-settings-b1fa9bbf.png",
+    "screenshots/stage3/20261117-121228-enterprise-small-window-687e793d.png",
+    "screenshots/stage3/20261117-121229-enterprise-larger-text-6a4dd974.png",
+    "screenshots/stage3/20261117-121229-enterprise-explanation-dialog-54a9e0fb.png"
+  ]
+}

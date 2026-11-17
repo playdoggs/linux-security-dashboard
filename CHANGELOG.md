@@ -5,6 +5,17 @@ All notable changes to Linux Security Dashboard are documented here.
 ## [Unreleased] — v4.2.1
 
 ### Changed
+- Increment 4G: prioritize Name, Risk and Actions in the findings table's visual
+  order, with viewport-based widths and escaped full-text tooltips. Logical column
+  indices, sorting, filtering, explanation content and action handlers are retained.
+  Make explanation dialogs content-sized within screen-aware limits, with all text
+  scrollable and a separate, always-visible Close control.
+- UI redesign Stage 3: introduce Overview, Assets, Assessments, Findings,
+  Remediation, Reports and Settings. Reuse persistent scan/result controllers;
+  move existing controls to their workspace destinations and retain scan keyboard
+  shortcuts. Add global operation/endpoint status and collapsible Activity.
+  Preserve legacy scan routing through a presentation adapter, existing results,
+  report semantics, privilege approval, undo persistence and shutdown behaviour.
 - UI redesign Stage 2: add Enterprise Workspace (default) and Hybrid Professional,
   retaining all five legacy palettes and locked appearance preferences. Share
   semantic colours, typography, sizing and focus styles across existing widgets;

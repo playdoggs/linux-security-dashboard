@@ -1,0 +1,21 @@
+{
+  "checks": [
+    "Enterprise Workspace: requested 1440x900, actual 1536x850, viewport 1250",
+    "Enterprise Workspace: requested 1100x700, actual 1100x700, viewport 814",
+    "Hybrid Professional: requested 1440x900, actual 1440x900, viewport 1154",
+    "Hybrid Professional: requested 1100x700, actual 1100x700, viewport 814",
+    "normal/small geometry, priority columns, complete escaped tooltip and necessary-only scrolling passed",
+    "search, sorting, explanation/double-click and original action routing passed (actions intercepted)",
+    "short-dialog: text preserved, dimensions bounded, scrolling/Close/Escape passed",
+    "long-dialog: text preserved, dimensions bounded, scrolling/Close/Escape passed",
+    "named explanation sections and glossary preserved"
+  ],
+  "screenshots": [
+    "screenshots/increment4g-performance/20261117-130220-enterprise-workspace-findings-actual-1536x850-f4693ac1.png",
+    "screenshots/increment4g-performance/20261117-130221-enterprise-workspace-findings-actual-1100x700-f866a737.png",
+    "screenshots/increment4g-performance/20261117-130221-hybrid-professional-findings-actual-1440x900-d6e96bd1.png",
+    "screenshots/increment4g-performance/20261117-130222-hybrid-professional-findings-actual-1100x700-427edbd7.png",
+    "screenshots/increment4g-performance/20261117-130222-short-dialog-7e6a4a88.png",
+    "screenshots/increment4g-performance/20261117-130222-long-dialog-5bb388d7.png"
+  ]
+}

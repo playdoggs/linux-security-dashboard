@@ -27,6 +27,41 @@ skin, with muted Hacker/Solarized text adjusted for readability.
 This section describes the Stage 2 implementation only; the historical component
 line references below have not been comprehensively refreshed.
 
+## Workspace shell (Stage 3)
+
+`AuditDashboard._build_workspace()` creates seven pages once and retains one
+instance of each existing controller/result widget. `SideBar` remains the existing
+scan controller, rendered as assessment actions rather than primary navigation.
+`WorkspaceRouter` translates its old indices: 0 → Findings, 1/2 → Assessments
+CVE/Lynis tabs, 3/4 → Remediation tools/undo tabs. No scan controller is reconstructed
+when a page is selected. Existing non-constructor scan/worker/remediation/report
+methods are unchanged. Reparented inventory/wizard controls mirror their original
+controller's enabled state through a UI-only change event.
+
+A 500 ms display timer reads operation/coverage state for the header and Overview;
+it does not sequence, execute, cancel or complete work. Activity uses the existing
+terminal and splitter, with a visibility toggle. Form pages scroll when necessary.
+See [feature mapping and validation](agent_docs/ui_navigation_shell.md). Historical
+line references/diagrams below predate the shell; the existing execution and storage
+sections remain authoritative for those mechanisms.
+
+## Responsive findings presentation (Increment 4G)
+
+`ResponsiveFindingsTable` uses the existing six logical columns unchanged, while
+ordering them visually as Name, Risk, Actions, Type, Tag, Detail. It recomputes widths
+on view resize/data changes and theme sizing; priority columns receive minimums
+before surplus goes to Name/Detail. Users can still drag interactive headers;
+automatic allocation resumes on a view resize or evidence refresh. Below the
+combined minima, horizontal scrolling remains available. Text is elided rather
+than wrapped into tall rows; full current cell text is HTML-escaped in tooltips.
+Sorting, search, report readers and action callbacks continue to use logical indices.
+
+`ExplainDialog` retains the same explanation/glossary selection and text, with its
+header and body inside one top-aligned scroll area. Its initial dimensions follow
+content, bounded by 760×640 logical pixels and the available screen (with margins).
+The Close control remains outside the scroll area. No execution, authorization or
+persistence code participates in either sizing mechanism.
+
 ## Component table (file → role)
 
 The application is a single-file PyQt6 GUI. All components live in [linux-security-dashboard.py](linux-security-dashboard.py); line numbers below pin each component.

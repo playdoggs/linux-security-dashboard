@@ -1,0 +1,25 @@
+{
+  "checks": [
+    "seven destinations: no execution, exclusive accessible selection",
+    "legacy routing preserves controller identities",
+    "feature controls retain existing controllers and destination placement",
+    "navigation/activity during real QThread execution preserves ownership and evidence",
+    "all seven themes preserve findings, score and incomplete coverage",
+    "desktop keyboard focus unavailable",
+    "existing explanation dialog and normal shutdown passed"
+  ],
+  "screenshots": [
+    "screenshots/stage3/20261117-120942-enterprise-workspace-overview-4d2c9562.png",
+    "screenshots/stage3/20261117-120942-enterprise-workspace-assessments-08856dd4.png",
+    "screenshots/stage3/20261117-120942-enterprise-workspace-findings-f5f4cebb.png",
+    "screenshots/stage3/20261117-120942-enterprise-workspace-settings-1b397a30.png",
+    "screenshots/stage3/20261117-120942-hybrid-professional-overview-6140a2fe.png",
+    "screenshots/stage3/20261117-120942-hybrid-professional-assessments-ada2e72c.png",
+    "screenshots/stage3/20261117-120943-hybrid-professional-findings-6a8007a8.png",
+    "screenshots/stage3/20261117-120943-hybrid-professional-settings-69012b21.png",
+    "screenshots/stage3/20261117-120944-enterprise-small-window-fea60e84.png",
+    "screenshots/stage3/20261117-120945-enterprise-larger-text-db659594.png",
+    "screenshots/stage3/20261117-120945-enterprise-explanation-dialog-4636dbd2.png"
+  ],
+  "scope": "Initial shell visual pass; later evidence includes the final layouts."
+}

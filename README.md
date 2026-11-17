@@ -56,6 +56,21 @@ This tool assumes you don't — and that's fine.
 
 ---
 
+## Workspace navigation
+
+The seven-section workspace keeps existing execution safeguards and results.
+Use **Assessments** to start checks, **Findings** to review results,
+**Remediation** for tools/guided fixes/undo, **Reports** for exports, and
+**Settings** for appearance, language, mode, profile and diagnostics.
+**Overview** shows endpoint/coverage summaries; **Assets** provides existing
+system details and package inventory actions. Inventory results still use
+Findings and Activity and can replace prior results, as before.
+
+Activity can be collapsed from the global header without stopping work.
+Alt+1–7 selects sections; Ctrl+R retains the three-step legacy scan and
+Ctrl+1–5 retains individual scan shortcuts (CVE shortcut requires Online mode).
+See [navigation mapping and validation](agent_docs/ui_navigation_shell.md).
+
 ## Who is this for
 
 - Linux home users who switched from Windows and aren't sure if their system is secure

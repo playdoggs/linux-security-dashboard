@@ -32,6 +32,62 @@ Tab traversal passed. Two ResourceWarnings originate from pre-existing direct
 SQLite connections in `tests/test_undo_history_store.py` (the lifecycle-mutation
 test); allocation tracing confirmed their origin. They were not changed here.
 
+## Workspace navigation regression checks
+
+`tests/test_workspace_navigation.py` adds a pure production-router test and an
+isolated real-widget test through `tests/ui_navigation_probe.py`. The child process
+uses temporary preferences/history/logs and synthetic evidence; real host commands
+are prohibited. A real QThread emits fixture network output and waits on a bounded
+Event. Tests navigate across every page while it is active, assert unchanged
+ownership/evidence, reject conflicting work, then wait for native completion.
+They also check placement, original controller identity, linked enable/disable
+state, exclusive accessible selection, Qt keyboard activation, Activity visibility,
+all seven themes, incomplete coverage, resizing, explanation dialog and normal close.
+
+Desktop visual evidence can be reproduced with:
+
+```bash
+python3 -B tests/ui_navigation_probe.py --screenshots screenshots/stage3
+```
+
+Run on an authorized desktop. Descriptive timestamp/UUID filenames preserve all
+previous screenshots; a JSON visual validation record is saved alongside them.
+Runtime preferences and logs remain temporary. No screenshot is staged automatically.
+This fixture does not execute real package/service/privileged operations or install
+a schedule. Semantic captures still use the unchanged corrected Stage 1 fixtures.
+
+## Responsive findings and explanation tests (Increment 4G)
+
+`tests/test_responsive_findings.py` runs four isolated production-widget probes via
+`tests/ui_findings_probe.py`: normal/smaller resizing and necessary-only scrolling,
+complete escaped tooltips, risk sorting/search/action routing, short dialog sizing,
+long scrolling content, Close/Escape and preservation of named sections/glossary.
+Remediation slots are intercepted before clicks; no sudo or host commands execute.
+Temporary preferences, history and runtime logs stay outside the repository.
+
+```bash
+python3 -B -m unittest discover -s tests -p test_responsive_findings.py -v
+python3 -B tests/ui_findings_probe.py --screenshots screenshots/increment4g
+```
+
+The second command requires an authorized desktop and creates unique screenshots
+and a visual validation JSON record without replacing existing evidence. Actual
+window dimensions are recorded because the window manager may adjust a requested
+size. No changes are made to real user preferences or host configuration.
+
+Increment 4G executed result (2026-11-17): **223 tests passed** in 16.651 seconds
+(219 existing plus four focused tests); corrected Stage 1 captures **MATCH** and
+`git diff --check` clean. Desktop fixtures verified actual 1100×700 windows in both
+professional appearances and larger windows (the window manager adjusted the first
+Enterprise request to 1536×879). Priority columns/actions fit without horizontal
+scrolling; a deliberately narrower 480-pixel embedded view correctly scrolls.
+Short and 160-line explanations, Close/Escape, named sections and glossary passed.
+The fixture explicitly disposes its widget tree while QApplication remains alive,
+fixing a test-process teardown crash exposed by the additional dialog case.
+Two previously observed SQLite-test ResourceWarnings remain outside this change.
+Initial visual iterations are preserved; final evidence is the 12:35 run under
+`screenshots/increment4g/`. GUI preferences/logs remain outside the repository.
+
 ## Automated command-outcome regression tests
 
 ```bash

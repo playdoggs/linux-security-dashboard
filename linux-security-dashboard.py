@@ -46,13 +46,13 @@ from PyQt6.QtWidgets import (
     QDialog, QDialogButtonBox, QScrollArea, QComboBox, QStatusBar,
     QFileDialog, QListWidget, QListWidgetItem, QStackedWidget,
     QRadioButton, QButtonGroup, QLineEdit, QCheckBox, QGroupBox,
-    QSizePolicy, QScrollBar, QInputDialog, QSplitterHandle, QTimeEdit
+    QSizePolicy, QScrollBar, QInputDialog, QSplitterHandle, QTimeEdit, QToolTip
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QTime, QObject, QEvent
 # QShortcut is in QtGui in PyQt6 (moved from QtWidgets in Qt5)
 from PyQt6.QtGui import (
     QFont, QColor, QPalette, QTextCursor, QTextFormat, QPixmap,
-    QKeySequence, QShortcut, QPainter
+    QKeySequence, QShortcut, QPainter, QFontMetrics
 )
 
 # ── File paths for persistent data ────────────────────────────────────────────
@@ -265,7 +265,7 @@ QTableWidget {{ gridline-color:{T['BORDER']}; alternate-background-color:{T['BG_
 QTableWidget::item {{ padding:0px 8px; border-bottom:1px solid {T['BORDER']}; }}
 QTableWidget::item:selected {{ background:{T['SELECTED']}; color:{T['TEXT_MAIN']}; }}
 QHeaderView::section {{ background:{T['BG_CARD']}; color:{T['TEXT_MAIN']}; border:none; border-bottom:1px solid {T['CONTROL_BORDER']}; padding:10px 8px; font-weight:600; }}
-QWidget#toolbar_bar, QWidget#risk_panel_bar {{ background:{T['BG_MID']}; border-bottom:1px solid {T['BORDER']}; }}
+QWidget#toolbar_bar, QWidget#risk_panel_bar, QWidget#workspace_header {{ background:{T['BG_MID']}; border-bottom:1px solid {T['BORDER']}; }}
 QWidget#findings_hdr, QWidget#terminal_hdr {{ background:{T['BG_MID']}; border-bottom:1px solid {T['BORDER']}; }}
 QWidget#sidebar_widget, QWidget#sidebar_info_box, QWidget#sidebar_menu, QWidget#sidebar_viewport, QScrollArea#sidebar_scroll {{ background:{T['SIDEBAR']}; }}
 QWidget#sidebar_widget QLabel {{ color:{T['NAV_DIM']}; background:transparent; }}
@@ -290,6 +290,10 @@ QGroupBox {{ border:1px solid {T['BORDER']}; border-radius:{r}px; margin-top:16p
 QGroupBox::title {{ subcontrol-origin:margin; left:10px; padding:0 4px; color:{T['TEXT_MAIN']}; }}
 QCheckBox, QRadioButton {{ spacing:8px; padding:4px; }}
 QCheckBox:focus, QRadioButton:focus {{ border:1px solid {T['ACCENT']}; }}
+QTabWidget::pane {{ border:1px solid {T['BORDER']}; background:{T['BG_MID']}; }}
+QTabBar::tab {{ background:{T['BG_CARD']}; color:{T['TEXT_MAIN']}; padding:10px 16px; border:1px solid {T['BORDER']}; }}
+QTabBar::tab:selected {{ background:{T['SELECTED']}; color:{T['ACCENT']}; border-bottom:2px solid {T['ACCENT']}; }}
+QTabBar::tab:focus {{ border:2px solid {T['ACCENT']}; }}
 QToolTip {{ background:{T['BG_MID']}; color:{T['TEXT_MAIN']}; border:1px solid {T['CONTROL_BORDER']}; padding:8px; }}
 """
 
@@ -343,7 +347,9 @@ def foundation_geometry(widget):
         height = max(UI_METRICS["row_min"], widget.fontMetrics().height()+22)
         widget.verticalHeader().setDefaultSectionSize(height)
         for row in range(widget.rowCount()): widget.setRowHeight(row,height)
-        if widget.columnCount()==6:
+        if hasattr(widget,"fit_columns"):
+            widget.fit_columns()
+        elif widget.columnCount()==6:
             widget.setColumnWidth(2,max(UI_METRICS["risk_width"],widget.fontMetrics().horizontalAdvance("🟡 ▲ MEDIUM")+32))
             widget.setColumnWidth(5,max(UI_METRICS["actions_width"],4*(widget.fontMetrics().horizontalAdvance("DISABLE")+24)))
 
@@ -435,6 +441,9 @@ def refresh_theme_widgets(app, old=None):
     for widget in app.allWidgets():
         if widget.objectName()=="sidebar_widget":foundation_geometry(widget)
         if widget.objectName()=="toolbar_bar":foundation_toolbar(widget)
+        if hasattr(widget,"fit_columns"):
+            widget.schedule_fit()
+            widget.fit_columns()
 
 
 class FoundationEvents(QObject):
@@ -2982,9 +2991,21 @@ class ExplainDialog(QDialog):
     def __init__(self, name, ftype, risk, detail, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Everyday Language Explanation")
-        self.setMinimumSize(580, 420)
+        available = self.screen().availableGeometry()
+        max_width = min(760, max(280, available.width() - 40))
+        max_height = min(640, max(180, available.height() - 60))
+        self.setMinimumSize(min(420, max_width), min(200, max_height))
+        self.setMaximumSize(max_width, max_height)
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
+        scroll = QScrollArea()
+        scroll.setObjectName("explanation_content")
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("border:none;")
+        inner = QWidget()
+        il = QVBoxLayout(inner)
+        il.setSpacing(8)
+        il.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         # Risk level uses both colour AND shape for colour-blind accessibility
         icons  = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢", "INFO": "🔵"}
@@ -2996,23 +3017,15 @@ class ExplainDialog(QDialog):
         title = QLabel(f"{icons.get(risk, '⚪')} {shapes.get(risk, risk)}  —  {name}")
         set_theme_style(title, lambda : f"color:{T['ACCENT']};font-size:{fs(2)}px;font-weight:bold;")
         title.setWordWrap(True)
-        layout.addWidget(title)
+        il.addWidget(title)
 
         rl = QLabel(f"Type: {ftype}")
         set_theme_style(rl, lambda cols=theme_value(cols), risk=theme_value(risk): f"color:{cols.get(risk, T['TEXT_DIM'])};font-weight:bold;font-size:{fs()}px;")
-        layout.addWidget(rl)
+        il.addWidget(rl)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        layout.addWidget(sep)
-
-        # Scrollable content area for the explanation
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("border:none;")
-        inner = QWidget()
-        il = QVBoxLayout(inner)
-        il.setSpacing(8)
+        il.addWidget(sep)
 
         exp = EXPLANATIONS.get(name, {})
         if exp:
@@ -3068,6 +3081,118 @@ class ExplainDialog(QDialog):
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         btns.rejected.connect(self.close)
         layout.addWidget(btns)
+        # All explanation text scrolls; dismissal never shares the scroll viewport.
+        for label in inner.findChildren(QLabel):
+            label.ensurePolished()
+        width = min(600, max_width)
+        content_height = il.totalHeightForWidth(width - 48)
+        if content_height < 0:
+            content_height = il.sizeHint().height()
+        height = content_height + btns.sizeHint().height() + 42
+        self.resize(width, max(self.minimumHeight(), min(max_height, height)))
+
+
+class ResponsiveFindingsTable(QTableWidget):
+    """UI-only column allocation; logical indices and row data never change."""
+    def __init__(self):
+        super().__init__()
+        self._fitting_columns = False
+        self._minimums = (160, 270)
+        self._minimums_dirty = True
+        # An owned timer coalesces evidence/layout changes and disappears with
+        # the table. Width-only resize never performs a row traversal.
+        self._minimums_timer = QTimer(self)
+        self._minimums_timer.setSingleShot(True)
+        self._minimums_timer.timeout.connect(self._recalculate_minimums)
+        for signal in (self.model().rowsInserted, self.model().rowsRemoved,
+                       self.model().modelReset, self.model().dataChanged):
+            signal.connect(self.schedule_fit)
+
+    def schedule_fit(self, *args):
+        self._minimums_dirty = True
+        if not self._minimums_timer.isActive():
+            self._minimums_timer.start(0)
+
+    def setCellWidget(self, row, column, widget):
+        super().setCellWidget(row, column, widget)
+        if column == 5:
+            if widget is not None:
+                self._watch_action_widget(widget)
+            self.schedule_fit()
+
+    def removeCellWidget(self, row, column):
+        super().removeCellWidget(row, column)
+        if column == 5:
+            self.schedule_fit()
+
+    def _watch_action_widget(self, widget):
+        widget.installEventFilter(self)
+        for child in widget.findChildren(QWidget):
+            child.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange,
+                            QEvent.Type.LayoutRequest, QEvent.Type.ChildAdded,
+                            QEvent.Type.ChildRemoved):
+            self.schedule_fit()
+        return super().eventFilter(watched, event)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            if hasattr(self, "_minimums_timer"):
+                self.schedule_fit()
+
+    def _recalculate_minimums(self):
+        if not self._minimums_dirty or self.columnCount() != 6:
+            return
+        self._minimums_dirty = False
+        risk_width = max(160, self.fontMetrics().horizontalAdvance("🟡 ▲ MEDIUM") + 32)
+        actions_width = 270
+        for row in range(self.rowCount()):
+            item = self.item(row, 2)
+            if item is not None:
+                risk_width = max(risk_width, QFontMetrics(item.font()).horizontalAdvance(item.text()) + 32)
+            widget = self.cellWidget(row, 5)
+            if widget is not None:
+                # Also watch descendants added after the initial cell install.
+                self._watch_action_widget(widget)
+                actions_width = max(actions_width, widget.minimumSizeHint().width() + 12)
+        self._minimums = (risk_width, actions_width)
+        self.fit_columns()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.fit_columns()
+
+    def fit_columns(self):
+        if self._fitting_columns or self.columnCount() != 6:
+            return
+        self._fitting_columns = True
+        try:
+            risk_width, actions_width = self._minimums
+            # Cached evidence minima; width-only work is always six allocations,
+            # even while a coalesced evidence/style recomputation is pending.
+            minimums = [max(140, self.fontMetrics().horizontalAdvance("Finding name") + 24),
+                        64, risk_width, 64, 96, actions_width]
+            spare = max(0, self.viewport().width() - sum(minimums))
+            widths = list(minimums)
+            widths[0] += round(spare * .40)
+            widths[4] += spare - round(spare * .40)
+            for col, width in enumerate(widths):
+                if self.columnWidth(col) != width:
+                    self.setColumnWidth(col, width)
+        finally:
+            self._fitting_columns = False
+
+    def viewportEvent(self, event):
+        if event.type() == QEvent.Type.ToolTip:
+            index = self.indexAt(event.pos())
+            item = self.item(index.row(), index.column()) if index.isValid() else None
+            if item is not None:
+                QToolTip.showText(event.globalPos(), "<qt>" + html.escape(item.text()).replace("\n", "<br>") + "</qt>", self.viewport())
+                return True
+        return super().viewportEvent(event)
 
 
 # ── Findings table ────────────────────────────────────────────────────────────
@@ -3126,7 +3251,7 @@ class FindingsTable(QWidget, WorkerMixin):
         layout.addWidget(hdr)
 
         # ── The findings table itself ──
-        self.table = QTableWidget()
+        self.table = ResponsiveFindingsTable()
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(
             ["NAME", "TYPE", "RISK", "TAG", "DETAIL", "ACTIONS"]
@@ -3136,14 +3261,14 @@ class FindingsTable(QWidget, WorkerMixin):
         # Interactive mode: users can drag column borders to resize them
         for col in range(6):
             hh.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
-        # Set sensible default widths
-        self.table.setColumnWidth(0, 180)   # Name
-        self.table.setColumnWidth(1, 90)    # Type
-        self.table.setColumnWidth(2, 160)   # Risk
-        self.table.setColumnWidth(3, 90)    # Tag
-        self.table.setColumnWidth(4, 400)   # Detail — widest
-        self.table.setColumnWidth(5, 280)   # Actions — needs room for buttons
+        # Visual ordering only: all consumers retain logical indices 0..5.
+        hh.moveSection(hh.visualIndex(2), 1)
+        hh.moveSection(hh.visualIndex(5), 2)
         hh.setStretchLastSection(False)
+        self.table.setWordWrap(False)
+        self.table.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.table.schedule_fit()
 
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -4915,7 +5040,7 @@ class LynisPanel(QWidget, WorkerMixin):
         info.setWordWrap(True)
         layout.addWidget(info)
 
-        self.status = QLabel("Click 'Run Lynis Audit' on the left to start.")
+        self.status = QLabel("Open Assessments → Checks → Run Lynis Audit to start.")
         self.status.setObjectName("status")
         layout.addWidget(self.status)
 
@@ -5146,7 +5271,7 @@ class CvePanel(QWidget, WorkerMixin):
         info.setWordWrap(True)
         layout.addWidget(info)
 
-        self.status = QLabel("Click 'Check for Known Vulnerabilities' on the left to start.")
+        self.status = QLabel("Open Assessments → Checks → Check for Known Vulnerabilities to start.")
         self.status.setObjectName("status")
         layout.addWidget(self.status)
 
@@ -6452,7 +6577,7 @@ class UndoPanel(QWidget, WorkerMixin):
         finally:
             self._inflight.discard(record_id)
 
-# ── Left sidebar navigation ───────────────────────────────────────────────────
+# ── Persistent scan action controller ────────────────────────────────────────
 class SideBar(QWidget, WorkerMixin):
     """The left navigation panel. Contains all scan/check buttons grouped
     into labelled sections with subtitles explaining what each section does.
@@ -6488,167 +6613,47 @@ class SideBar(QWidget, WorkerMixin):
             "undo": {"undo"},
         }
 
-        self.setFixedWidth(252)
-        self.setObjectName("sidebar_widget")
-
+        # This persistent controller now renders assessment actions in the workspace.
+        # Other action buttons are reparented once into Assets/Remediation.
+        self.setObjectName("assessment_controls")
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
-        root_layout.setSpacing(0)
-
-        # Scrollable menu area so controls never overlap on smaller window heights
-        menu_scroll = QScrollArea()
-        menu_scroll.setObjectName("sidebar_scroll")
-        menu_scroll.viewport().setObjectName("sidebar_viewport")
-        menu_scroll.setWidgetResizable(True)
-        menu_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        menu_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        menu_host = QWidget()
-        menu_host.setObjectName("sidebar_menu")
-        layout = QVBoxLayout(menu_host)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        menu_scroll.setWidget(menu_host)
-        root_layout.addWidget(menu_scroll, 1)
-
-        # ── Helper: collapsible section header ───────────────────────────
-        def section(section_id, title_key, sub_key):
-            """Create a collapsible section. Starts collapsed on every app launch."""
-            is_expanded = False
-
-            # Outer container holding header + content
-            outer = QWidget()
-            outer_l = QVBoxLayout(outer)
-            outer_l.setContentsMargins(0, 0, 0, 0)
-            outer_l.setSpacing(0)
-
-            # Header button (acts as a toggle) — styled via make_style() #section_btn
-            arrow   = "▼" if is_expanded else "▶"
-            hdr_btn = QPushButton(f"{arrow}  {L(title_key)}")
-            hdr_btn.setObjectName("section_btn")
-            sub_lbl = QLabel(L(sub_key))
-            sub_lbl.setObjectName("section_sub")
-            sub_lbl.setWordWrap(True)
-
-            # Content container — buttons go inside here. Indent left so
-            # expanded sections visually read as a menu "tree": you see the
-            # section as a parent and its buttons as children underneath.
-            content   = QWidget()
-            content_l = QVBoxLayout(content)
-            content_l.setContentsMargins(14, 0, 0, 0)
-            content_l.setSpacing(0)
-            content.setVisible(is_expanded)
-            sub_lbl.setVisible(is_expanded)
-
-            def _toggle(_checked=False, _title=title_key, _btn=hdr_btn,
-                        _sub_lbl=sub_lbl, _content=content):
-                now_expanded = not _content.isVisible()
-                _content.setVisible(now_expanded)
-                _sub_lbl.setVisible(now_expanded)
-                self._update_section_header(section_id, now_expanded)
-
-            hdr_btn.clicked.connect(_toggle)
-            outer_l.addWidget(hdr_btn)
-            outer_l.addWidget(sub_lbl)
-            outer_l.addWidget(content)
-            layout.addWidget(outer)
-            self._section_headers[section_id] = (hdr_btn, title_key)
-            self._update_section_header(section_id, is_expanded)
-            return content_l
-
-        # Track every sidebar menu button so we can flip the "active" style
-        # off on the previously-selected one when a new one is clicked.
+        grid = QGridLayout()
+        grid.setSpacing(8)
+        root_layout.addLayout(grid)
         self._menu_buttons = []
         self._active_menu_btn = None
-
-        # ── Helper: add a button into a section content layout ────────────
-        def btn(label_key, tooltip, handler, parent_layout=None,
-                style="section_btn", shortcut=None):
-            b = QPushButton(L(label_key))
-            b.setObjectName(style)
-            b.setFixedHeight(42)
-            b.setToolTip(tooltip)
-            b.clicked.connect(handler)
-            # Mark as active on click — visual follows user intent whether
-            # the handler opens a panel, runs a scan, or launches a dialog.
-            b.clicked.connect(lambda _, bb=b: self._mark_active_btn(bb))
-            if shortcut:
-                b.setShortcut(QKeySequence(shortcut))
-                b.setToolTip(f"{tooltip} [{shortcut}]")
-            target = parent_layout if parent_layout is not None else layout
-            target.addWidget(b)
-            self._menu_buttons.append(b)
-            return b
-
-        # ── SCAN YOUR SYSTEM ──────────────────────────────────────────────
-        sec_scan = section("scan", "sec_scan", "sec_scan_sub")
-        btn("btn_unused",
-            "Finds software installed as part of something else that is now "
-            "just sitting there — leftovers from old installs",
-            self._scan_unused, parent_layout=sec_scan, shortcut="Ctrl+1")
-        btn("btn_network",
-            "Shows every open network port and which program owns it",
-            self._scan_network, parent_layout=sec_scan, shortcut="Ctrl+2")
-        btn("btn_services",
-            "Checks for known insecure or unnecessary services",
-            self._scan_services, parent_layout=sec_scan, shortcut="Ctrl+3")
-        btn("btn_os_installed",
-            "Packages that came pre-installed with your OS — not installed by you",
-            self._scan_os_installed, parent_layout=sec_scan)
-        btn("btn_user_installed",
-            "Packages you deliberately installed — via apt install or a GUI store",
-            self._scan_user_installed, parent_layout=sec_scan)
-        btn("btn_fullscan",
-            "Runs all scans above in one go — the best place to start",
-            self._run_full_scan, parent_layout=sec_scan, style="ok", shortcut="Ctrl+R")
-
-        # ── SECURITY CHECKS ───────────────────────────────────────────────
-        sec_checks = section("checks", "sec_checks", "sec_checks_sub")
-        btn("btn_quick",
-            "Checks firewall, SSH, core dumps, ASLR — takes about 5 seconds",
-            self._quick_checks, parent_layout=sec_checks, shortcut="Ctrl+4")
-        btn("btn_lynis",
-            "Full industry-standard Lynis security audit — takes about 60 seconds",
-            self._run_lynis, parent_layout=sec_checks)
-        btn("btn_wizard",
-            "Guided step-by-step walkthroughs for common security fixes",
-            self._guided_wizard, parent_layout=sec_checks)
-        btn("btn_temperature",
-            "Reads CPU, GPU, and drive temperatures — read-only, no sudo",
-            self._scan_temperature, parent_layout=sec_checks)
-        btn("btn_drives",
-            "SMART self-assessment for every physical drive — sudo, read-only (no self-test)",
-            self._scan_drives, parent_layout=sec_checks)
-
-        # ── CVE VULNERABILITY CHECK ───────────────────────────────────────
-        sec_cve = section("cve", "sec_cve", "sec_cve_sub")
-        if online_mode:
-            btn("btn_cve",
-                "Checks installed packages against Ubuntu's live vulnerability database",
-                self._scan_cve, parent_layout=sec_cve, shortcut="Ctrl+5")
-            btn("btn_upgrades",
-                "Shows packages that have newer versions available",
-                self._scan_upgrades, parent_layout=sec_cve)
-        else:
-            # Offline mode — CVE checks need internet so just show a notice
-            notice = QLabel(
-                "  ℹ  CVE checks require\n  an internet connection.\n  (Offline Mode)"
-            )
-            set_theme_style(notice, lambda : f"color:{T['NAV_DIM']};font-size:{fs(-2)}px;padding:8px;")
-            sec_cve.addWidget(notice)
-
-        # ── RECOMMENDED TOOLS ─────────────────────────────────────────────
-        sec_tools = section("tools", "sec_tools", "sec_tools_sub")
-        btn("btn_tools",
-            "Shows the 15 recommended security and monitoring tools",
-            self._show_tools, parent_layout=sec_tools)
-
-        # ── UNDO / ROLLBACK ───────────────────────────────────────────────
-        sec_undo = section("undo", "sec_undo", "sec_undo_sub")
-        btn("btn_undo",
-            "Shows everything this app has done and lets you reverse any action",
-            self._show_undo, parent_layout=sec_undo)
-
-        layout.addStretch()
+        self.action_buttons = {}
+        specs = [
+            ("btn_unused", self._scan_unused, "Find unused packages"),
+            ("btn_network", self._scan_network, "Inspect listening ports"),
+            ("btn_services", self._scan_services, "Check the existing risky-package list"),
+            ("btn_fullscan", self._run_full_scan, "Run the legacy three-step scan"),
+            ("btn_quick", self._quick_checks, "Run existing quick security checks"),
+            ("btn_temperature", self._scan_temperature, "Read temperature sensors without sudo"),
+            ("btn_drives", self._scan_drives, "Read SMART health with approval; no self-tests"),
+            ("btn_lynis", self._run_lynis, "Open and run the existing Lynis audit"),
+            ("btn_cve", self._scan_cve, "Check CVEs using the existing provider"),
+            ("btn_upgrades", self._scan_upgrades, "Check for available updates"),
+            ("btn_os_installed", self._scan_os_installed, "Show OS package inventory"),
+            ("btn_user_installed", self._scan_user_installed, "Show user-installed package inventory"),
+            ("btn_wizard", self._guided_wizard, "Open the existing guided fix dialog"),
+            ("btn_tools", self._show_tools, "Open recommended tools"),
+            ("btn_undo", self._show_undo, "Open undo history"),
+        ]
+        for index, (key, handler, tooltip) in enumerate(specs):
+            button = QPushButton(L(key))
+            button.setObjectName("neutral")
+            button.setToolTip(tooltip)
+            button.setAccessibleName(L(key))
+            button.clicked.connect(handler)
+            grid.addWidget(button, index // 2, index % 2)
+            self._menu_buttons.append(button)
+            self.action_buttons[key] = button
+        if not online_mode:
+            for key in ("btn_cve", "btn_upgrades"):
+                self.action_buttons[key].setEnabled(False)
+                self.action_buttons[key].setToolTip("Unavailable in the selected Offline mode")
 
         # ── Machine info box at the bottom of the sidebar ──
         info_box = QWidget()
@@ -6695,6 +6700,17 @@ class SideBar(QWidget, WorkerMixin):
         built.setWordWrap(True)
         il.addWidget(built)
         root_layout.addWidget(info_box, 0)
+        self.endpoint_info = info_box
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.EnabledChange:
+            # These existing actions now live on other pages; preserve their
+            # previous inherited disable state during assessment orchestration.
+            for key in ("btn_os_installed", "btn_user_installed", "btn_wizard"):
+                button = getattr(self, "action_buttons", {}).get(key)
+                if button is not None:
+                    button.setEnabled(self.isEnabled())
 
     def _mark_active_btn(self, btn):
         """Visually mark one sidebar menu button as the current selection.
@@ -7497,7 +7513,7 @@ class StartupWizard(QDialog):
 
         tip = QLabel(
             "\nTips for getting started:\n\n"
-            "  •  Click 'RUN FULL SCAN' on the left sidebar to begin\n"
+            "  •  Open Assessments → Checks → RUN FULL SCAN to begin\n"
             "  •  Double-click any finding for a everyday language explanation\n"
             "  •  Nothing changes until you click REMOVE or DISABLE and confirm\n"
             "  •  The face at the top improves as you fix issues\n"
@@ -8017,17 +8033,25 @@ Mode: {"Executive" if mode == "executive" else "Technical"}
 </body></html>"""
 
 
+class WorkspaceRouter:
+    """Translate legacy controller page requests without recreating a controller."""
+    def __init__(self, window):
+        self.window = window
+
+    def setCurrentIndex(self, index):
+        if index == 0:
+            self.window._navigate("Findings")
+        elif index in (1, 2):
+            self.window.assessment_tabs.setCurrentIndex(index)
+            self.window._navigate("Assessments")
+        elif index in (3, 4):
+            self.window.remediation_tabs.setCurrentIndex(index - 3)
+            self.window._navigate("Remediation")
+
+
 # ── Main application window ───────────────────────────────────────────────────
 class AuditDashboard(QMainWindow):
-    """The main application window. Assembles all panels and wires up signals.
-    Layout:
-    ┌─ Toolbar (mode / lang / theme / session summary / report / show code) ─┐
-    ├─ Risk score panel (face + progress bar + profile label) ────────────────┤
-    ├─ Sidebar (240px) ─┬─ Tab widget (findings / cve / lynis / tools / undo)─┤
-    │                   ├─ ─────────────── splitter ─────────────────────────┤
-    │                   └─ Terminal output panel ─────────────────────────────┤
-    └───────────────────────────────────────────────────────────────────────── ┘
-    """
+    """Seven persistent workspace pages sharing existing controllers and Activity."""
 
     def __init__(self, wizard_result=None):
         super().__init__()
@@ -8063,168 +8087,7 @@ class AuditDashboard(QMainWindow):
             self.online_mode = wizard_result.online
             self.profile_key = wizard_result.profile
 
-        # ── Build the central widget layout ──
-        central = QWidget()
-        self.setCentralWidget(central)
-        root = QVBoxLayout(central)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-
-        # ── Toolbar ──────────────────────────────────────────────────────
-        tbw = QWidget()
-        tbw.setObjectName("toolbar_bar")   # styled via make_style() so theme changes apply
-        tbw.setMinimumHeight(84)
-        tb = QVBoxLayout(tbw)
-        tb.setContentsMargins(10, 6, 10, 6)
-        tb.setSpacing(6)
-
-        top_row = QGridLayout()
-        preference_groups = []
-        top_row.setContentsMargins(0, 0, 0, 0)
-        top_row.setSpacing(8)
-        title_lbl = QLabel(L("title"))
-        title_lbl.setObjectName("app_title")   # styled via make_style()
-        title_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        title_lbl.setMinimumWidth(280)
-        top_row.addWidget(title_lbl,0,0)
-        top_row.setColumnStretch(0,1)
-
-        # Mode / Language / Theme dropdowns
-        for label2, items2, width2, attr2, handler2 in [
-            ("Mode:",  [L("mode_simple"), L("mode_expert")], 130, "mode_combo", self._toggle_mode),
-            ("Lang:",  list(LANGS.keys()),                    80, "lang_combo",  self._change_lang),
-            ("Theme:", list(THEMES.keys()),                  115, "theme_combo", self._change_theme),
-        ]:
-            ll = QLabel(label2)
-            ll.setObjectName("status")
-            group = QWidget()
-            group_layout = QHBoxLayout(group)
-            group_layout.setContentsMargins(0,0,0,0)
-            group_layout.addWidget(ll)
-            preference_groups.append(group)
-            top_row.addWidget(group,0,len(preference_groups))
-            cb = QComboBox()
-            cb.addItems(items2)
-            cb.setFixedWidth(width2)
-            setattr(self, attr2, cb)
-            cb.currentTextChanged.connect(handler2)
-            cb.setAccessibleName(label2.rstrip(":"))
-            ll.setBuddy(cb)
-            group_layout.addWidget(cb)
-
-        self.theme_lock_btn = QPushButton()
-        self.theme_lock_btn.setObjectName("neutral")
-        self.theme_lock_btn.setCheckable(True)
-        self.theme_lock_btn.setChecked(self.theme_locked)
-        self.theme_lock_btn.setFixedHeight(30)
-        self.theme_lock_btn.clicked.connect(self._toggle_theme_lock)
-        preference_groups.append(self.theme_lock_btn)
-        top_row.addWidget(self.theme_lock_btn,0,len(preference_groups))
-        tbw._ui_header = (top_row,title_lbl,preference_groups)
-        self._update_theme_lock_button()
-        tb.addLayout(top_row)
-
-        actions_row = QGridLayout()
-        toolbar_buttons = []
-        actions_row.setContentsMargins(0, 0, 0, 0)
-        actions_row.setSpacing(8)
-
-        # Set combos to saved values — block signals to avoid premature handlers
-        self.mode_combo.blockSignals(True)
-        self.mode_combo.setCurrentText(
-            L("mode_expert") if self.expert_mode else L("mode_simple")
-        )
-        self.mode_combo.blockSignals(False)
-        self.lang_combo.setCurrentText(saved_lang)
-        self.theme_combo.blockSignals(True)
-        self.theme_combo.setCurrentText(startup_theme)
-        self.theme_combo.blockSignals(False)
-
-        # Toolbar action buttons
-        for lbl3, tip3, handler3 in [
-            ("▶  RUN EVERYTHING",    "Run every non-sudo scan and show an at-a-glance assessment of what's good and what needs fixing", self._run_everything),
-            ("📋  What's Been Done?", "Everyday Language summary of everything done this session", self._show_session_summary),
-            ("👤  CHANGE PROFILE",   "Re-detect or manually select your system profile",       self._detect_profile),
-            ("📄  REPORT",           "Generate a detailed HTML security report",                self._generate_report),
-            ("{ }  SHOW CODE",       "See every command this app can run — full transparency",  self._show_code),
-            ("🪲  DEV LOG",          "Show the application error/debug log in the terminal",    self._show_dev_log),
-        ]:
-            b = QPushButton(lbl3)
-            b.setObjectName("neutral")
-            b.setFixedHeight(30)
-            b.setToolTip(tip3)
-            b.clicked.connect(handler3)
-            actions_row.addWidget(b,0,len(toolbar_buttons))
-            toolbar_buttons.append(b)
-        tbw._ui_actions = (actions_row,toolbar_buttons)
-        tb.addLayout(actions_row)
-        root.addWidget(tbw)
-
-        # ── Risk score panel ──────────────────────────────────────────────
-        rpw = QWidget()
-        rpw.setObjectName("risk_panel_bar")  # styled via make_style() so theme changes apply
-        rl = QHBoxLayout(rpw)
-        rl.setContentsMargins(0, 0, 0, 0)
-        self.risk_panel = RiskScorePanel()
-        rl.addWidget(self.risk_panel)
-        root.addWidget(rpw)
-
-        # ── Main body: sidebar + content area ────────────────────────────
-        body = QWidget()
-        body_layout = QHBoxLayout(body)
-        body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(0)
-        root.addWidget(body)
-
-        # Build the shared panels
-        self.terminal  = TerminalPanel()
-        self.findings  = FindingsTable(self.terminal)
-        self.findings.score_changed.connect(self.risk_panel.update_score)
-        self.findings.expert_mode = self.expert_mode
-        self.risk_panel.bind_findings(self.findings)
-
-        lynis_panel = LynisPanel(self.terminal, self.findings)
-        cve_panel   = CvePanel(self.terminal, self.findings)
-        tools_panel = ToolsPanel(self.terminal)
-        undo_panel  = UndoPanel(self.terminal)
-
-        # Register the undo panel so FindingsTable can update it live
-        QApplication.instance().undo_panel_ref = undo_panel
-
-        # ── Stack widget (no visible tab bar — sidebar controls page) ────
-        # Page indices: 0=findings, 1=cve, 2=lynis, 3=tools, 4=undo
-        self.stack = QStackedWidget()
-        self.stack.addWidget(self.findings)
-        self.stack.addWidget(cve_panel)
-        self.stack.addWidget(lynis_panel)
-        self.stack.addWidget(tools_panel)
-        self.stack.addWidget(undo_panel)
-
-        # ── Vertical splitter: stack on top, terminal on bottom ───────────
-        self.vsplit = CueSplitter(Qt.Orientation.Vertical)
-        self.vsplit.setHandleWidth(12)
-        self.vsplit.setToolTip("Drag here to resize panels")
-        self.vsplit.addWidget(self.stack)
-        self.vsplit.addWidget(self.terminal)
-        self.vsplit.setSizes([580, 260])
-
-        # ── Sidebar (built last so it has references to all panels) ───────
-        self.sidebar = SideBar(
-            self.terminal, self.findings,
-            lynis_panel, cve_panel, tools_panel, undo_panel,
-            self.stack, self.online_mode
-        )
-        body_layout.addWidget(self.sidebar)
-        body_layout.addWidget(self.vsplit, 1)
-
-        # ── Status bar ────────────────────────────────────────────────────
-        sb = QStatusBar()
-        self.setStatusBar(sb)
-        sb.showMessage(
-            "Ready  |  Ctrl+R = Full Scan  |  Ctrl+1-5 = Individual Scans  |  "
-            "Double-click any finding for a everyday language explanation  |  "
-            "Drag the bar between panels to resize"
-        )
+        self._build_workspace(startup_theme, saved_lang)
 
         # ── Set up profile ────────────────────────────────────────────────
         # Always detect on startup so the profile stays current.
@@ -8249,9 +8112,283 @@ class AuditDashboard(QMainWindow):
             T["ACCENT"]
         )
         self.terminal.append_info(
-            "Use the sidebar on the left to run scans. "
+            "Open Assessments to run scans; review results in Findings and Activity. "
             "Nothing changes on your system until you confirm an action."
         )
+
+    SECTIONS = ("Overview", "Assets", "Assessments", "Findings", "Remediation", "Reports", "Settings")
+
+    def _build_workspace(self, startup_theme, saved_lang):
+        """Build presentation once. Navigation never dispatches work."""
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QVBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        header = QWidget()
+        header.setObjectName("workspace_header")
+        top = QHBoxLayout(header)
+        title = QLabel("Linux Security Dashboard")
+        title.setObjectName("app_title")
+        top.addWidget(title)
+        self.operation_label = QLabel("Ready")
+        self.operation_label.setAccessibleName("Current operation")
+        self.operation_label.setWordWrap(True)
+        top.addWidget(self.operation_label, 1)
+        self.activity_toggle = QPushButton("Activity")
+        self.activity_toggle.setCheckable(True)
+        self.activity_toggle.setChecked(True)
+        self.activity_toggle.setAccessibleName("Show or hide Activity")
+        self.activity_toggle.toggled.connect(self._toggle_activity)
+        top.addWidget(self.activity_toggle)
+        root.addWidget(header)
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        root.addLayout(body, 1)
+
+        self.workspace_nav = QWidget()
+        self.workspace_nav.setObjectName("sidebar_widget")
+        rail = QVBoxLayout(self.workspace_nav)
+        rail.setContentsMargins(8, 12, 8, 8)
+        self.nav_group = QButtonGroup(self)
+        self.nav_group.setExclusive(True)
+        self.nav_buttons = {}
+        for index, name in enumerate(self.SECTIONS):
+            button = QPushButton(name)
+            button.setObjectName("section_btn")
+            button.setCheckable(True)
+            button.setAccessibleName(name)
+            button.setToolTip(f"Open {name}; Alt+{index + 1}")
+            button.clicked.connect(lambda checked=False, page=name: self._navigate(page))
+            self.nav_group.addButton(button)
+            self.nav_buttons[name] = button
+            rail.addWidget(button)
+            shortcut = QShortcut(QKeySequence(f"Alt+{index + 1}"), self)
+            shortcut.activated.connect(lambda page=name: self._navigate(page))
+        rail.addStretch()
+        body.addWidget(self.workspace_nav)
+
+        self.terminal = TerminalPanel()
+        self.findings = FindingsTable(self.terminal)
+        self.findings.expert_mode = self.expert_mode
+        self.risk_panel = RiskScorePanel()
+        self.risk_panel.bind_findings(self.findings)
+        self.findings.score_changed.connect(self.risk_panel.update_score)
+        self.lynis_panel = LynisPanel(self.terminal, self.findings)
+        self.cve_panel = CvePanel(self.terminal, self.findings)
+        self.tools_panel = ToolsPanel(self.terminal)
+        self.undo_panel = UndoPanel(self.terminal)
+        QApplication.instance().undo_panel_ref = self.undo_panel
+        self.stack = QStackedWidget()
+        self.pages = {}
+        self.page_layouts = {}
+        descriptions = {
+            "Overview": "Local endpoint, detected findings and coverage of the selected checks.",
+            "Assets": "Existing local system details and package inventories.",
+            "Assessments": "Run existing checks; results are evidence, not security certification.",
+            "Findings": "Search, explain and act on the existing findings. Presentation mode is unchanged.",
+            "Remediation": "Review guided fixes, recommended tools and durable undo history.",
+            "Reports": "Export the current results or review existing assessment and session summaries.",
+            "Settings": "Appearance, language, presentation mode, profile and diagnostics.",
+        }
+        for name in self.SECTIONS:
+            page = QWidget()
+            layout = QVBoxLayout(page)
+            layout.setContentsMargins(16, 12, 16, 8)
+            heading = QLabel(name)
+            heading.setObjectName("heading")
+            description = QLabel(descriptions[name])
+            description.setWordWrap(True)
+            description.setObjectName("status")
+            layout.addWidget(heading)
+            layout.addWidget(description)
+            self.stack.addWidget(page)
+            self.pages[name], self.page_layouts[name] = page, layout
+
+        self.sidebar = SideBar(self.terminal, self.findings, self.lynis_panel,
+                               self.cve_panel, self.tools_panel, self.undo_panel,
+                               WorkspaceRouter(self), self.online_mode)
+        rail.addWidget(self.sidebar.endpoint_info)
+        self.assessment_tabs = QTabWidget()
+        self.assessment_tabs.setAccessibleName("Assessment tools")
+        checks = QWidget()
+        checks_layout = QVBoxLayout(checks)
+        run_all = QPushButton("RUN EVERYTHING — seven checks")
+        run_all.setObjectName("ok")
+        run_all.clicked.connect(self._run_everything)
+        # Keep this control under the existing controller's enable/disable boundary.
+        self.sidebar.layout().insertWidget(0, run_all)
+        checks_layout.addWidget(self.sidebar)
+        checks_layout.addStretch()
+        self.assessment_tabs.addTab(self._scroll_page(checks), "Checks")
+        self.assessment_tabs.addTab(self.cve_panel, "CVEs / Updates")
+        self.assessment_tabs.addTab(self.lynis_panel, "Lynis")
+        self.page_layouts["Assessments"].addWidget(self.assessment_tabs, 1)
+        self._workspace_action("Assessments", "Open scheduler", lambda: ScheduleScanDialog(self.tools_panel).exec())
+
+        self.page_layouts["Findings"].addWidget(self.findings, 1)
+        self.remediation_tabs = QTabWidget()
+        self.remediation_tabs.setAccessibleName("Remediation tools")
+        self.remediation_tabs.addTab(self.tools_panel, "Recommended tools")
+        self.remediation_tabs.addTab(self.undo_panel, "Undo / History")
+        self.page_layouts["Remediation"].addWidget(self.remediation_tabs, 1)
+        # Reparent existing buttons, preserving their connected controller slots.
+        for key, section in (("btn_os_installed", "Assets"), ("btn_user_installed", "Assets"),
+                             ("btn_wizard", "Remediation")):
+            self.page_layouts[section].addWidget(self.sidebar.action_buttons[key])
+        # Old page-selector buttons are replaced by the persistent navigation/tabs.
+        # Retain references and their slots without leaving duplicate controls visible.
+        self._retired_controls = QWidget(self)
+        self._retired_controls.hide()
+        for key in ("btn_tools", "btn_undo"):
+            self.sidebar.action_buttons[key].setParent(self._retired_controls)
+        self._workspace_action("Assets", "List all installed packages", self.sidebar._scan_installed)
+        asset_note = QLabel("Inventory actions use the existing result paths: Findings and Activity. They may replace prior results, as before.")
+        asset_note.setWordWrap(True)
+        self.page_layouts["Assets"].addWidget(asset_note)
+        self.system_info = get_system_info()
+        system_text = "\n".join(f"{key.capitalize()}: {value}" for key, value in self.system_info.items())
+        self.asset_details = QLabel(system_text)
+        self.asset_details.setTextFormat(Qt.TextFormat.PlainText)
+        self.asset_details.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.asset_details.setWordWrap(True)
+        self.page_layouts["Assets"].insertWidget(2, self.asset_details)
+        self.page_layouts["Assets"].addStretch()
+
+        overview = self.page_layouts["Overview"]
+        endpoint_text = "\n".join(f"{key.capitalize()}: {self.system_info.get(key, 'Unknown')}"
+                                  for key in ("hostname", "os", "kernel"))
+        self.overview_endpoint = QLabel(endpoint_text)
+        self.overview_endpoint.setTextFormat(Qt.TextFormat.PlainText)
+        self.overview_endpoint.setWordWrap(True)
+        overview.addWidget(self.overview_endpoint)
+        overview.addWidget(self.risk_panel)
+        self.overview_verdict = QLabel()
+        self.overview_verdict.setWordWrap(True)
+        self.overview_verdict.setTextFormat(Qt.TextFormat.PlainText)
+        overview.addWidget(self.overview_verdict)
+        self.overview_coverage = QLabel()
+        self.overview_coverage.setWordWrap(True)
+        self.overview_coverage.setTextFormat(Qt.TextFormat.PlainText)
+        overview.addWidget(self.overview_coverage)
+        self._workspace_action("Overview", "Open Assessments", lambda: self._navigate("Assessments"))
+        self._workspace_action("Overview", "Review Findings", lambda: self._navigate("Findings"))
+        overview.addStretch()
+        self.stack.removeWidget(self.pages["Overview"])
+        self.stack.insertWidget(0, self._scroll_page(self.pages["Overview"]))
+
+        self._workspace_action("Reports", "Export Executive or Technical HTML", self._generate_report)
+        self._workspace_action("Reports", "Assessment summary", self._open_assessment_summary)
+        self._workspace_action("Reports", "What's Been Done? — session summary", self._show_session_summary)
+        self.page_layouts["Reports"].addStretch()
+        for label, items, attr, handler in (
+            ("Appearance", list(THEMES), "theme_combo", self._change_theme),
+            ("Language", list(LANGS), "lang_combo", self._change_lang),
+            ("Presentation mode", [L("mode_simple"), L("mode_expert")], "mode_combo", self._toggle_mode),
+        ):
+            group = QWidget()
+            row = QHBoxLayout(group)
+            caption = QLabel(label)
+            combo = QComboBox()
+            combo.addItems(items)
+            combo.setAccessibleName(label)
+            caption.setBuddy(combo)
+            row.addWidget(caption)
+            row.addWidget(combo, 1)
+            setattr(self, attr, combo)
+            combo.setCurrentText(startup_theme if attr == "theme_combo" else saved_lang if attr == "lang_combo"
+                                 else L("mode_expert") if self.expert_mode else L("mode_simple"))
+            combo.currentTextChanged.connect(handler)
+            self.page_layouts["Settings"].addWidget(group)
+        self.theme_lock_btn = QPushButton()
+        self.theme_lock_btn.setObjectName("neutral")
+        self.theme_lock_btn.setCheckable(True)
+        self.theme_lock_btn.setChecked(self.theme_locked)
+        self.theme_lock_btn.clicked.connect(self._toggle_theme_lock)
+        self._update_theme_lock_button()
+        self.page_layouts["Settings"].addWidget(self.theme_lock_btn)
+        self._workspace_action("Settings", "Change / detect profile", self._detect_profile)
+        self._workspace_action("Settings", "Show command reference", self._show_code)
+        self._workspace_action("Settings", "Show diagnostic log in Activity", self._open_diagnostics)
+        self.page_layouts["Settings"].addStretch()
+        # Keep form/action pages usable when text is enlarged or Activity is open.
+        for name in ("Assets", "Reports", "Settings"):
+            index = self.SECTIONS.index(name)
+            self.stack.removeWidget(self.pages[name])
+            self.stack.insertWidget(index, self._scroll_page(self.pages[name]))
+        # Preserve existing scan keyboard shortcuts across all destinations.
+        for key, handler in (("Ctrl+R", self.sidebar._run_full_scan), ("Ctrl+1", self.sidebar._scan_unused),
+                             ("Ctrl+2", self.sidebar._scan_network), ("Ctrl+3", self.sidebar._scan_services),
+                             ("Ctrl+4", self.sidebar._quick_checks), ("Ctrl+5", self.sidebar._scan_cve)):
+            if key == "Ctrl+5" and not self.online_mode:
+                continue
+            shortcut = QShortcut(QKeySequence(key), self)
+            shortcut.activated.connect(handler)
+        self.vsplit = CueSplitter(Qt.Orientation.Vertical)
+        self.vsplit.setHandleWidth(12)
+        self.vsplit.addWidget(self.stack)
+        self.vsplit.addWidget(self.terminal)
+        self.vsplit.setSizes([650, 200])
+        body.addWidget(self.vsplit, 1)
+        self.setStatusBar(QStatusBar())
+        self.statusBar().showMessage("Alt+1–7: pages | Ctrl+R: legacy full scan | Ctrl+1–5: individual scans | Activity: output and text sizing")
+        # Presentation-only refresh. Never dispatches, claims or completes work.
+        self._workspace_timer = QTimer(self)
+        self._workspace_timer.setInterval(500)
+        self._workspace_timer.timeout.connect(self._refresh_workspace)
+        self._workspace_timer.start()
+        self._refresh_workspace()
+        self._navigate("Overview")
+
+    def _workspace_action(self, section, text, handler):
+        button = QPushButton(text)
+        button.setObjectName("neutral")
+        button.setAccessibleName(text)
+        button.clicked.connect(handler)
+        self.page_layouts[section].addWidget(button)
+        return button
+
+    @staticmethod
+    def _scroll_page(widget):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(widget)
+        return scroll
+
+    def _navigate(self, name):
+        if name not in self.SECTIONS:
+            return
+        self.stack.setCurrentIndex(self.SECTIONS.index(name))
+        self.nav_buttons[name].setChecked(True)
+        self._refresh_workspace()
+
+    def _toggle_activity(self, visible):
+        if not hasattr(self, "terminal"):
+            return
+        if not visible:
+            self._activity_sizes = self.vsplit.sizes()
+        self.terminal.setVisible(visible)
+        if visible:
+            self.vsplit.setSizes(getattr(self, "_activity_sizes", [650, 200]))
+
+    def _refresh_workspace(self):
+        owner = scan_owner(self)
+        label = owner.label if owner and owner.token else "Ready"
+        shutdown = owner.shutdown_state if owner else "running"
+        self.operation_label.setText(f"{self.system_info.get('hostname', 'Local endpoint')} · {label}"
+                                     + (f" · {shutdown.replace('_', ' ')}" if shutdown != "running" else ""))
+        coverage = getattr(self.findings, "_assessment_coverage", None)
+        count = sum(level in ("HIGH", "MEDIUM", "LOW") for level in RISK.findings)
+        self.overview_verdict.setText(assessment_verdict(coverage, count))
+        self.overview_coverage.setText(assessment_details(coverage))
+
+    def _open_assessment_summary(self):
+        RunEverythingSummaryDialog(self.findings, self.profile_key, self).exec()
+
+    def _open_diagnostics(self):
+        self.activity_toggle.setChecked(True)
+        self._show_dev_log()
 
     def _shutdown_busy(self):
         owner = scan_owner(self)
