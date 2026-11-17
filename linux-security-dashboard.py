@@ -41,17 +41,17 @@ from pathlib import Path  # Clean cross-platform file path handling
 # GUI toolkit. Install with: pip install PyQt6 --break-system-packages
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QTextEdit, QTableWidget, QTableWidgetItem, QLabel,
+    QPushButton, QGridLayout, QTextEdit, QTableWidget, QTableWidgetItem, QLabel,
     QSplitter, QTabWidget, QHeaderView, QMessageBox, QFrame, QProgressBar,
     QDialog, QDialogButtonBox, QScrollArea, QComboBox, QStatusBar,
     QFileDialog, QListWidget, QListWidgetItem, QStackedWidget,
     QRadioButton, QButtonGroup, QLineEdit, QCheckBox, QGroupBox,
     QSizePolicy, QScrollBar, QInputDialog, QSplitterHandle, QTimeEdit
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QTime
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QTime, QObject, QEvent
 # QShortcut is in QtGui in PyQt6 (moved from QtWidgets in Qt5)
 from PyQt6.QtGui import (
-    QFont, QColor, QPalette, QTextCursor, QPixmap,
+    QFont, QColor, QPalette, QTextCursor, QTextFormat, QPixmap,
     QKeySequence, QShortcut, QPainter
 )
 
@@ -111,15 +111,15 @@ def config_bool(value, default=False):
 def get_startup_theme(cfg):
     """
     Startup rule:
-    - Default to Light every launch
+    - Default to Enterprise Workspace every launch
     - Unless the user locked a theme, in which case use the locked theme
     """
     locked = config_bool(cfg.get("prefs", "theme_locked", fallback="false"))
     if locked:
-        locked_theme = cfg.get("prefs", "locked_theme", fallback="Light")
+        locked_theme = cfg.get("prefs", "locked_theme", fallback="Enterprise Workspace")
         if locked_theme in THEMES:
             return locked_theme
-    return "Light"
+    return "Enterprise Workspace"
 
 # ── Input validation ──────────────────────────────────────────────────────────
 # Only allow valid Linux package names — prevents command injection attacks
@@ -146,6 +146,16 @@ def fs(delta=0):
 # Each theme is a dictionary of colour codes. T is the active theme.
 # apply_theme() updates T and make_style() rebuilds the stylesheet.
 THEMES = {
+    "Enterprise Workspace": {
+        "BG_DARK":"#f5f7fa","BG_MID":"#ffffff","BG_CARD":"#eef2f6",
+        "ACCENT":"#175cd3","WARN":"#854a0e","DANGER":"#b42318","OK":"#146c43",
+        "TEXT_MAIN":"#172b4d","TEXT_DIM":"#475467","BORDER":"#cbd5e1","SIDEBAR":"#ffffff"
+    },
+    "Hybrid Professional": {
+        "BG_DARK":"#f5f7fa","BG_MID":"#ffffff","BG_CARD":"#eef2f6",
+        "ACCENT":"#175cd3","WARN":"#854a0e","DANGER":"#b42318","OK":"#146c43",
+        "TEXT_MAIN":"#172b4d","TEXT_DIM":"#475467","BORDER":"#cbd5e1","SIDEBAR":"#172b4d"
+    },
     "Dark": {
         "BG_DARK":"#0d1117","BG_MID":"#161b22","BG_CARD":"#21262d",
         "ACCENT":"#00d9ff","WARN":"#f0a500","DANGER":"#ff4444","OK":"#3fb950",
@@ -172,12 +182,30 @@ THEMES = {
         "TEXT_MAIN":"#ffe0f0","TEXT_DIM":"#cc88aa","BORDER":"#5a2a5a","SIDEBAR":"#1a0a1a"
     },
 }
-T = dict(THEMES["Dark"])  # Start with Dark theme
+UI_METRICS = {"space": 8, "radius": 6, "control_min": 32, "row_min": 44,
+              "risk_width": 160, "actions_width": 280}
+UI_TYPOGRAPHY = {"family": "Sans Serif", "heading_delta": 5, "body_delta": 1}
+T = dict(THEMES["Enterprise Workspace"])
 
 def apply_theme(name):
     """Switch the active theme. Call make_style() after to update the UI."""
     global T
-    T.update(THEMES.get(name, THEMES["Dark"]))
+    T.clear()
+    T.update(THEMES.get(name, THEMES["Enterprise Workspace"]))
+    hybrid = name == "Hybrid Professional"
+    T.update(NAV_TEXT="#ffffff" if hybrid else T["TEXT_MAIN"],
+             NAV_DIM="#d0d5dd" if hybrid else T["TEXT_DIM"],
+             NAV_ACTIVE="#253b5c" if hybrid else T["BG_CARD"],
+             NAV_ACCENT="#b8d4ff" if hybrid else T["ACCENT"],
+             CONTROL_BORDER="#667085" if name in ("Enterprise Workspace", "Hybrid Professional", "Light") else T["TEXT_DIM"],
+             PROFESSIONAL=name in ("Enterprise Workspace", "Hybrid Professional"),
+             NAV_OK="#8be0b0" if hybrid else T["OK"],
+             NAV_WARN="#ffd18a" if hybrid else T["WARN"],
+             NAV_DANGER="#ffb4ac" if hybrid else T["DANGER"],
+             SELECTED="#e8f0fe" if name in ("Enterprise Workspace", "Hybrid Professional", "Light") else T["BG_CARD"])
+
+    if name == "Hacker": T["TEXT_DIM"] = "#89b98d"
+    if name == "Solarized": T["TEXT_DIM"] = "#a3b4b7"
 
 def build_palette():
     """Build a QPalette from the current theme T.
@@ -214,237 +242,207 @@ def build_palette():
     return p
 
 def make_style():
-    """Build and return the complete Qt stylesheet string for the current theme.
-    Called whenever the theme changes or font size changes."""
-    f = BASE_FS
+    """One component stylesheet for professional and retained legacy palettes."""
+    r, gap = UI_METRICS["radius"], UI_METRICS["space"]
     return f"""
-/* ── Base widget styles ── */
-QMainWindow, QWidget {{
-    background: {T['BG_DARK']};
-    color: {T['TEXT_MAIN']};
-    font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
-    font-size: {f}px;
-}}
-/* ── Tab bar ── */
-QTabWidget::pane {{
-    border: 1px solid {T['BORDER']};
-    background: {T['BG_MID']};
-    border-radius: 0 6px 6px 6px;
-}}
-QTabBar::tab {{
-    background: {T['BG_CARD']};
-    color: {T['TEXT_DIM']};
-    padding: 8px 14px;
-    border: 1px solid {T['BORDER']};
-    border-bottom: none;
-    border-radius: 4px 4px 0 0;
-    margin-right: 2px;
-    font-size: {f-1}px;
-    min-width: 80px;
-}}
-QTabBar::tab:selected {{
-    background: {T['BG_MID']};
-    color: {T['ACCENT']};
-    border-bottom: 2px solid {T['ACCENT']};
-    font-weight: bold;
-}}
-QTabBar::tab:hover {{ color: {T['ACCENT']}; }}
-/* ── Buttons — default style ── */
-QPushButton {{
-    background: {T['BG_CARD']};
-    color: {T['ACCENT']};
-    border: 1px solid {T['ACCENT']};
-    border-radius: 4px;
-    padding: 6px 14px;
-    font-size: {f-1}px;
-}}
-QPushButton:hover {{ background: {T['ACCENT']}; color: {T['BG_DARK']}; }}
-QPushButton:disabled {{ color: {T['TEXT_DIM']}; border-color: {T['BORDER']}; }}
-/* ── Button colour variants ── */
-QPushButton#danger {{ color: {T['DANGER']}; border-color: {T['DANGER']}; }}
-QPushButton#danger:hover {{ background: {T['DANGER']}; color: #ffffff; }}
-QPushButton#warn {{ color: {T['WARN']}; border-color: {T['WARN']}; }}
-QPushButton#warn:hover {{ background: {T['WARN']}; color: {T['BG_DARK']}; }}
-QPushButton#ok {{ color: {T['OK']}; border-color: {T['OK']}; }}
-QPushButton#ok:hover {{ background: {T['OK']}; color: {T['BG_DARK']}; }}
-QPushButton#neutral {{ color: {T['TEXT_DIM']}; border-color: {T['BORDER']}; }}
-QPushButton#neutral:hover {{ background: {T['BG_CARD']}; color: {T['TEXT_MAIN']}; }}
-/* ── Sidebar section buttons — left accent border instead of full border ── */
-QPushButton#section_btn {{
-    background: {T['BG_MID']};
-    color: {T['TEXT_MAIN']};
-    border: none;
-    border-left: 3px solid {T['ACCENT']};
-    border-top: 1px solid {T['BORDER']};
-    border-radius: 0;
-    padding: 8px 10px;
-    font-size: {f-1}px;
-    font-weight: bold;
-    text-align: left;
-}}
-QPushButton#section_btn:hover {{
-    background: {T['BG_CARD']};
-    border-left: 3px solid {T['WARN']};
-}}
-/* ── Text areas and lists ── */
-QTextEdit, QListWidget {{
-    background: {T['BG_DARK']};
-    color: {T['TEXT_MAIN']};
-    border: 1px solid {T['BORDER']};
-    border-radius: 4px;
-    font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
-    font-size: {f-1}px;
-    padding: 6px;
-}}
-QLineEdit {{
-    background: {T['BG_CARD']};
-    color: {T['TEXT_MAIN']};
-    border: 1px solid {T['BORDER']};
-    border-radius: 4px;
-    padding: 4px 8px;
-    font-size: {f-1}px;
-}}
-QInputDialog QLineEdit {{
-    background: #ffffff;
-    color: #1a1a1a;
-    border: 2px solid {T['ACCENT']};
-    border-radius: 4px;
-    padding: 6px 8px;
-    font-size: {f}px;
-}}
-/* ── Tables ── */
-QTableWidget {{
-    background: {T['BG_MID']};
-    gridline-color: {T['BORDER']};
-    border: 1px solid {T['BORDER']};
-    border-radius: 4px;
-    font-size: {f-1}px;
-}}
-QTableWidget::item {{ padding: 6px 8px; border-bottom: 1px solid {T['BORDER']}; }}
-QTableWidget QTableView {{ alternate-background-color: {T['BG_DARK']}; }}
-QTableWidget::item:selected {{ background: {T['ACCENT']}; color: {T['BG_DARK']}; }}
-QHeaderView::section {{
-    background: {T['BG_CARD']};
-    color: {T['TEXT_DIM']};
-    border: none;
-    border-right: 1px solid {T['BORDER']};
-    border-bottom: 1px solid {T['BORDER']};
-    padding: 6px 8px;
-    font-size: {f-2}px;
-    letter-spacing: 1px;
-}}
-/* ── Scroll bars ── */
-QScrollBar:vertical {{ background: {T['BG_MID']}; width: 10px; border-radius: 5px; }}
-QScrollBar::handle:vertical {{ background: {T['BORDER']}; border-radius: 5px; min-height: 20px; }}
-QScrollBar:horizontal {{ background: {T['BG_MID']}; height: 10px; }}
-QScrollBar::handle:horizontal {{ background: {T['BORDER']}; border-radius: 5px; }}
-/* ── Splitter handles — the draggable dividers between panels ── */
-QSplitter::handle:vertical {{ background: {T['ACCENT']}; height: 10px; border-radius: 4px; }}
-QSplitter::handle:vertical:hover {{ background: {T['WARN']}; }}
-QSplitter::handle:horizontal {{ background: {T['BORDER']}; width: 10px; border-radius: 4px; }}
-QSplitter::handle:horizontal:hover {{ background: {T['ACCENT']}; }}
-/* ── Toolbar and risk bar — objectName-targeted so theme changes update them ── */
-QWidget#toolbar_bar {{
-    background: {T['BG_MID']};
-    border-bottom: 1px solid {T['BORDER']};
-}}
-QWidget#risk_panel_bar {{
-    background: {T['BG_MID']};
-    border-bottom: 2px solid {T['BORDER']};
-}}
-QWidget#sidebar_info_box {{
-    background: {T['BG_CARD']};
-    border-top: 1px solid {T['BORDER']};
-}}
-QWidget#sidebar_widget {{
-    background: {T['SIDEBAR']};
-}}
-QWidget#terminal_hdr {{
-    background: {T['BG_CARD']};
-    border-top: 2px solid {T['BORDER']};
-}}
-QWidget#findings_hdr {{
-    background: {T['BG_CARD']};
-    border-bottom: 1px solid {T['BORDER']};
-}}
-QFrame#tool_card {{
-    background: {T['BG_CARD']};
-    border: 1px solid {T['BORDER']};
-    border-radius: 6px;
-    margin: 2px;
-}}
-/* ── Label styles ── */
-QLabel#heading {{ color: {T['ACCENT']}; font-size: {f+1}px; letter-spacing: 2px; padding: 4px 0; font-weight: bold; }}
-QLabel#app_title {{ color: {T['ACCENT']}; font-size: {f}px; letter-spacing: 1px; font-weight: bold; }}
-QLabel#section_title {{ color: {T['TEXT_MAIN']}; font-size: {f-1}px; letter-spacing: 1px; padding: 2px 4px; font-weight: bold; background: {T['BG_MID']}; border-left: 3px solid {T['ACCENT']}; }}
-QLabel#section_sub {{ color: {T['TEXT_DIM']}; font-size: {f-3}px; padding: 0 8px 4px 14px; background: {T['BG_MID']}; border-left: 3px solid {T['ACCENT']}; }}
-QLabel#status {{ color: {T['TEXT_DIM']}; font-size: {f-1}px; padding: 2px 6px; }}
-/* ── Progress bar (the risk score bar) ── */
-QProgressBar {{
-    border: 1px solid {T['BORDER']};
-    border-radius: 6px;
-    background: {T['BG_CARD']};
-    height: 24px;
-    text-align: center;
-    font-size: {f}px;
-    font-weight: bold;
-    color: {T['TEXT_MAIN']};
-}}
-QProgressBar::chunk {{ border-radius: 5px; }}
-/* ── Dropdowns ── */
-QComboBox {{
-    background: {T['BG_CARD']};
-    color: {T['TEXT_MAIN']};
-    border: 1px solid {T['BORDER']};
-    border-radius: 4px;
-    padding: 4px 8px;
-    font-size: {f-1}px;
-}}
-QComboBox::drop-down {{ border: none; }}
-QComboBox QAbstractItemView {{
-    background: {T['BG_CARD']};
-    color: {T['TEXT_MAIN']};
-    border: 1px solid {T['BORDER']};
-    selection-background-color: {T['ACCENT']};
-    selection-color: {T['BG_DARK']};
-}}
-/* ── Tooltips ── */
-QToolTip {{
-    background: {T['BG_CARD']};
-    color: {T['TEXT_MAIN']};
-    border: 1px solid {T['ACCENT']};
-    padding: 6px;
-    font-size: {f-1}px;
-    border-radius: 4px;
-}}
-/* ── Dialogs ── */
-QDialog {{ background: {T['BG_MID']}; color: {T['TEXT_MAIN']}; }}
-/* ── Status bar at the bottom of the app ── */
-QStatusBar {{
-    background: {T['BG_CARD']};
-    color: {T['TEXT_MAIN']};
-    font-size: {f}px;
-    border-top: 2px solid {T['BORDER']};
-    min-height: 30px;
-    padding: 4px 8px;
-}}
-/* ── Group boxes (bordered sections in dialogs) ── */
-QGroupBox {{
-    border: 1px solid {T['BORDER']};
-    border-radius: 6px;
-    margin-top: 12px;
-    font-size: {f-1}px;
-    color: {T['TEXT_DIM']};
-    padding: 8px;
-}}
-QGroupBox::title {{
-    subcontrol-origin: margin;
-    left: 10px;
-    padding: 0 4px;
-    color: {T['ACCENT']};
-    font-size: {f-1}px;
-}}
+QWidget {{ color:{T['TEXT_MAIN']}; font-family:'{UI_TYPOGRAPHY['family']}'; font-size:{fs(1)}px; }}
+QMainWindow, QDialog {{ background:{T['BG_DARK']}; }}
+QLabel {{ background:transparent; }}
+QTextEdit, QListWidget, QTableWidget, QLineEdit, QComboBox {{ background:{T['BG_MID']}; color:{T['TEXT_MAIN']}; selection-background-color:{T['SELECTED']}; selection-color:{T['TEXT_MAIN']}; border:1px solid {T['CONTROL_BORDER']}; border-radius:{r}px; }}
+QTextEdit, QListWidget {{ padding:{gap}px; }}
+QLineEdit, QComboBox {{ padding:6px 10px; }}
+QComboBox QAbstractItemView {{ background:{T['BG_MID']}; color:{T['TEXT_MAIN']}; selection-background-color:{T['SELECTED']}; selection-color:{T['TEXT_MAIN']}; }}
+QPushButton {{ background:{T['BG_MID']}; color:{T['TEXT_MAIN']}; border:1px solid {T['CONTROL_BORDER']}; border-radius:{r}px; padding:5px 10px; }}
+QPushButton:hover {{ background:{T['BG_CARD']}; border-color:{T['ACCENT']}; }}
+QPushButton:pressed, QPushButton:checked {{ background:{T['SELECTED']}; color:{T['ACCENT']}; }}
+QPushButton:disabled {{ color:{T['TEXT_DIM']}; border-color:{T['BORDER']}; }}
+QPushButton#danger {{ color:{T['DANGER']}; border-color:{T['DANGER']}; }}
+QPushButton#warn {{ color:{T['WARN']}; border-color:{T['WARN']}; }}
+QPushButton#ok {{ color:{T['OK']}; border-color:{T['OK']}; }}
+QPushButton#neutral {{ color:{T['TEXT_MAIN']}; }}
+QPushButton:focus, QLineEdit:focus, QComboBox:focus, QListWidget:focus, QTableWidget:focus {{ border:2px solid {T['ACCENT']}; }}
+QTableWidget {{ gridline-color:{T['BORDER']}; alternate-background-color:{T['BG_CARD']}; }}
+QTableWidget::item {{ padding:0px 8px; border-bottom:1px solid {T['BORDER']}; }}
+QTableWidget::item:selected {{ background:{T['SELECTED']}; color:{T['TEXT_MAIN']}; }}
+QHeaderView::section {{ background:{T['BG_CARD']}; color:{T['TEXT_MAIN']}; border:none; border-bottom:1px solid {T['CONTROL_BORDER']}; padding:10px 8px; font-weight:600; }}
+QWidget#toolbar_bar, QWidget#risk_panel_bar {{ background:{T['BG_MID']}; border-bottom:1px solid {T['BORDER']}; }}
+QWidget#findings_hdr, QWidget#terminal_hdr {{ background:{T['BG_MID']}; border-bottom:1px solid {T['BORDER']}; }}
+QWidget#sidebar_widget, QWidget#sidebar_info_box, QWidget#sidebar_menu, QWidget#sidebar_viewport, QScrollArea#sidebar_scroll {{ background:{T['SIDEBAR']}; }}
+QWidget#sidebar_widget QLabel {{ color:{T['NAV_DIM']}; background:transparent; }}
+QPushButton#section_btn {{ background:{T['SIDEBAR']}; color:{T['NAV_TEXT']}; border:none; border-radius:{r}px; padding:10px 12px; text-align:left; font-weight:600; }}
+QPushButton#section_btn:hover, QPushButton#section_btn:checked {{ background:{T['NAV_ACTIVE']}; color:{T['NAV_ACCENT']}; }}
+QPushButton#section_btn:focus {{ border:2px solid {T['NAV_ACCENT']}; }}
+QLabel#heading {{ color:{T['TEXT_MAIN']}; font-size:{fs(3)}px; font-weight:600; padding:8px 0; }}
+QLabel#app_title {{ color:{T['TEXT_MAIN']}; font-size:{fs(3)}px; font-weight:600; }}
+QLabel#section_title {{ color:{T['NAV_TEXT']}; font-weight:600; padding:8px; }}
+QLabel#section_sub {{ color:{T['NAV_DIM']}; padding:4px 12px; }}
+QLabel#status {{ color:{T['TEXT_DIM']}; padding:4px 0; }}
+QFrame#tool_card {{ background:{T['BG_MID']}; border:1px solid {T['BORDER']}; border-radius:{r}px; margin:3px; }}
+QProgressBar {{ background:{T['BG_CARD']}; color:{T['TEXT_MAIN']}; border:1px solid {T['BORDER']}; border-radius:{r}px; text-align:center; font-weight:600; }}
+QProgressBar::chunk {{ background:{T['ACCENT']}; border-radius:{r}px; }}
+QScrollBar:vertical {{ background:{T['BG_CARD']}; width:12px; }}
+QScrollBar:horizontal {{ background:{T['BG_CARD']}; height:12px; }}
+QScrollBar::handle {{ background:{T['CONTROL_BORDER']}; border-radius:5px; min-height:24px; min-width:24px; }}
+QSplitter::handle {{ background:{T['BORDER']}; }}
+QSplitter::handle:hover {{ background:{T['ACCENT']}; }}
+QStatusBar {{ background:{T['BG_MID']}; color:{T['TEXT_DIM']}; border-top:1px solid {T['BORDER']}; padding:5px 8px; }}
+QGroupBox {{ border:1px solid {T['BORDER']}; border-radius:{r}px; margin-top:16px; padding:12px; }}
+QGroupBox::title {{ subcontrol-origin:margin; left:10px; padding:0 4px; color:{T['TEXT_MAIN']}; }}
+QCheckBox, QRadioButton {{ spacing:8px; padding:4px; }}
+QCheckBox:focus, QRadioButton:focus {{ border:1px solid {T['ACCENT']}; }}
+QToolTip {{ background:{T['BG_MID']}; color:{T['TEXT_MAIN']}; border:1px solid {T['CONTROL_BORDER']}; padding:8px; }}
 """
+
+
+class ThemeColor:
+    """A captured semantic colour that follows the current palette."""
+    def __init__(self, key): self.key = key
+    def __str__(self): return T[self.key]
+    def __format__(self, spec): return format(str(self), spec)
+
+
+def theme_value(value):
+    if isinstance(value, str):
+        for key in ("ACCENT", "WARN", "DANGER", "OK", "TEXT_MAIN", "TEXT_DIM", "BORDER", "BG_DARK", "BG_MID", "BG_CARD", "SIDEBAR"):
+            if value == T.get(key): return ThemeColor(key)
+    if isinstance(value, dict): return {key:theme_value(item) for key,item in value.items()}
+    return value
+
+
+def set_theme_style(widget, builder):
+    """Retain a style recipe, not the colour values from widget construction."""
+    widget._ui_theme_style = builder
+    widget.setStyleSheet(builder())
+
+
+def foundation_geometry(widget):
+    """Presentation sizing only; never create, execute or retire an operation."""
+    if isinstance(widget, (QPushButton,QComboBox)):
+        original = getattr(widget,"_ui_original_constraints",None)
+        if original is None:
+            original = (widget.minimumWidth(),widget.minimumHeight(),widget.maximumWidth(),widget.maximumHeight())
+            widget._ui_original_constraints = original
+        height = max(UI_METRICS["control_min"],widget.fontMetrics().height()+12)
+        if isinstance(widget,QComboBox):
+            width = max((widget.fontMetrics().horizontalAdvance(widget.itemText(i)) for i in range(widget.count())),default=0)+38
+        else: width=widget.fontMetrics().horizontalAdvance(widget.text())+24
+        widget.setMinimumHeight(max(original[1],height))
+        widget.setMaximumHeight(max(original[3],height))
+        widget.setMinimumWidth(max(original[0],width))
+        widget.setMaximumWidth(max(original[2],width))
+        if not widget.accessibleName():
+            label = widget.toolTip() or (widget.text() if isinstance(widget,QPushButton) else widget.objectName())
+            widget.setAccessibleName(label)
+    elif widget.objectName()=="sidebar_widget":
+        headings=[button for button in widget.findChildren(QPushButton) if button.objectName()=="section_btn"]
+        widget.setFixedWidth(max(252,max((b.fontMetrics().horizontalAdvance(b.text())+30 for b in headings),default=0)))
+    elif isinstance(widget, RiskScorePanel):
+        widget.setFixedHeight(max(104,widget.fontMetrics().height()*4+24))
+        widget.face_lbl.setVisible(not T.get("PROFESSIONAL",False))
+    elif isinstance(widget, QTableWidget):
+        height = max(UI_METRICS["row_min"], widget.fontMetrics().height()+22)
+        widget.verticalHeader().setDefaultSectionSize(height)
+        for row in range(widget.rowCount()): widget.setRowHeight(row,height)
+        if widget.columnCount()==6:
+            widget.setColumnWidth(2,max(UI_METRICS["risk_width"],widget.fontMetrics().horizontalAdvance("🟡 ▲ MEDIUM")+32))
+            widget.setColumnWidth(5,max(UI_METRICS["actions_width"],4*(widget.fontMetrics().horizontalAdvance("DISABLE")+24)))
+
+
+def foundation_toolbar(widget):
+    header=getattr(widget,"_ui_header",None)
+    actions=getattr(widget,"_ui_actions",None)
+    if header is None or actions is None: return
+    layout,title,groups=header
+    room=max(1,widget.width()-24)
+    needed=title.fontMetrics().horizontalAdvance(title.text())+sum(w.sizeHint().width()+8 for w in groups)
+    wrap=needed>room
+    action_layout,buttons=actions
+    columns=6 if sum(max(b.minimumWidth(),b.sizeHint().width())+8 for b in buttons)<=room else 3
+    control_height=max((b.minimumHeight() for b in buttons),default=32)
+    header_height=max(control_height,title.fontMetrics().height())
+    if wrap:header_height+=title.fontMetrics().height()+8
+    rows=(len(buttons)+columns-1)//columns
+    minimum_height=12+header_height+6+rows*control_height+(rows-1)*8
+    mode=(wrap,columns)
+    if getattr(widget,"_ui_reflow_mode",None)==mode:
+        widget.layout().invalidate()
+        widget.setMinimumHeight(max(84,minimum_height,widget.layout().minimumSize().height()))
+        return
+    widget._ui_reflow_mode=mode
+    while layout.count():layout.takeAt(0)
+    while action_layout.count():action_layout.takeAt(0)
+    if wrap:
+        layout.addWidget(title,0,0,1,4)
+        for col,group in enumerate(groups):layout.addWidget(group,1,col)
+    else:
+        layout.addWidget(title,0,0)
+        for col,group in enumerate(groups,1):layout.addWidget(group,0,col)
+    for index,button in enumerate(buttons):action_layout.addWidget(button,index//columns,index%columns)
+    layout.invalidate();action_layout.invalidate();widget.layout().invalidate()
+    widget.setMinimumHeight(max(84,minimum_height,widget.layout().minimumSize().height()))
+
+
+def refresh_theme_widgets(app, old=None):
+    """Refresh existing styles and text colours without rebuilding widgets/data."""
+    old = old or {}
+    # Background/navigation aliases must not recolour ordinary dark text white.
+    roles = ("ACCENT", "WARN", "DANGER", "OK", "TEXT_MAIN", "TEXT_DIM")
+    mapping = {}
+    for key in roles:
+        if key in old: mapping.setdefault(old[key],T[key])
+    for widget in app.allWidgets():
+        recipe = getattr(widget,"_ui_theme_style",None)
+        if recipe is not None: widget.setStyleSheet(recipe())
+        text_recipe = getattr(widget,"_ui_theme_text",None)
+        if text_recipe is not None: widget.setText(text_recipe())
+        widget.ensurePolished()
+        foundation_geometry(widget)
+        if isinstance(widget,QTableWidget):
+            for row in range(widget.rowCount()):
+                first=widget.item(row,0)
+                metadata=first.data(Qt.ItemDataRole.UserRole) if first else None
+                for col in range(widget.columnCount()):
+                    item=widget.item(row,col)
+                    if not item: continue
+                    if widget.columnCount()==6 and isinstance(metadata,dict) and "risk" in metadata:
+                        role="TEXT_MAIN"
+                        if col==2:role={"HIGH":"DANGER","MEDIUM":"WARN","LOW":"OK","INFO":"ACCENT"}.get(metadata["risk"],"TEXT_MAIN")
+                        elif col==3:
+                            role="OK" if item.text().startswith("NORMAL") else {"CVE":"DANGER","NETWORK":"WARN","SERVICE":"WARN","HARDENING":"WARN"}.get(metadata.get("ftype"),"TEXT_DIM")
+                        item.setForeground(QColor(T[role]))
+                    elif item.foreground().color().name() in mapping:
+                        item.setForeground(QColor(mapping[item.foreground().color().name()]))
+        if isinstance(widget,QTextEdit) and mapping:
+            block = widget.document().begin()
+            while block.isValid():
+                iterator = block.begin()
+                spans=[]
+                while not iterator.atEnd():
+                    fragment=iterator.fragment()
+                    if fragment.isValid():
+                        color=fragment.charFormat().foreground().color().name()
+                        role = fragment.charFormat().property(QTextFormat.Property.UserProperty)
+                        if role in roles: color_to_use=T[role]
+                        else: color_to_use=mapping.get(color)
+                        if color_to_use: spans.append((fragment.position(),fragment.length(),color_to_use))
+                    iterator+=1
+                for position,length,color in spans:
+                    cursor=QTextCursor(widget.document());cursor.setPosition(position)
+                    cursor.setPosition(position+length,QTextCursor.MoveMode.KeepAnchor)
+                    fmt=cursor.charFormat();fmt.setForeground(QColor(color));cursor.mergeCharFormat(fmt)
+                block=block.next()
+
+    for widget in app.allWidgets():
+        if widget.objectName()=="sidebar_widget":foundation_geometry(widget)
+        if widget.objectName()=="toolbar_bar":foundation_toolbar(widget)
+
+
+class FoundationEvents(QObject):
+    def eventFilter(self, widget, event):
+        if event.type()==QEvent.Type.Show: foundation_geometry(widget)
+        if event.type()==QEvent.Type.Resize and getattr(widget,"objectName",lambda:"")()=="toolbar_bar":foundation_toolbar(widget)
+        return False
+
 
 # ── Languages (12 supported) ──────────────────────────────────────────────────
 # Each language is a dict of UI string keys to translated values.
@@ -2634,8 +2632,9 @@ class TerminalPanel(QWidget, WorkerMixin):
         global BASE_FS
         BASE_FS = max(9, min(22, BASE_FS + delta))
         QApplication.instance().setStyleSheet(make_style())
+        refresh_theme_widgets(QApplication.instance())
 
-    def append(self, text, colour=None):
+    def append(self, text, colour=None, role=None):
         """Append a line of text to the terminal output.
         colour is an optional hex colour string e.g. '#ff4444'"""
         text = strip_ansi(text)
@@ -2645,6 +2644,7 @@ class TerminalPanel(QWidget, WorkerMixin):
         cur.movePosition(QTextCursor.MoveOperation.End)
         fmt = cur.charFormat()
         fmt.setForeground(QColor(colour or T["TEXT_MAIN"]))
+        fmt.setProperty(QTextFormat.Property.UserProperty, role or next((key for key in ("TEXT_MAIN","ACCENT","WARN","DANGER","OK","TEXT_DIM") if T.get(key)==colour), "TEXT_MAIN"))
         cur.setCharFormat(fmt)
         cur.insertText(text + "\n")
         self.output.setTextCursor(cur)
@@ -2653,23 +2653,23 @@ class TerminalPanel(QWidget, WorkerMixin):
     # Convenience methods for common message types
     def append_cmd(self, cmd):
         """Show a command that is about to run — displayed with an arrow."""
-        self.append(f"\n▶  {cmd}", T["ACCENT"])
+        self.append(f"\n▶  {cmd}", T["ACCENT"], role="ACCENT")
 
     def append_ok(self, text):
         """Show a success message in green."""
-        self.append(f"  ✔  {text}", T["OK"])
+        self.append(f"  ✔  {text}", T["OK"], role="OK")
 
     def append_err(self, text):
         """Show an error message in red. Strips ANSI codes first."""
-        self.append(f"  ✖  {strip_ansi(text)}", T["DANGER"])
+        self.append(f"  ✖  {strip_ansi(text)}", T["DANGER"], role="DANGER")
 
     def append_warn(self, text):
         """Show a warning message in amber."""
-        self.append(f"  ⚠  {text}", T["WARN"])
+        self.append(f"  ⚠  {text}", T["WARN"], role="WARN")
 
     def append_info(self, text):
         """Show an informational message in the dim colour."""
-        self.append(f"  ℹ  {text}", T["TEXT_DIM"])
+        self.append(f"  ℹ  {text}", T["TEXT_DIM"], role="TEXT_DIM")
 
 
 # ── Risk score + face health panel ───────────────────────────────────────────
@@ -2724,6 +2724,7 @@ class RiskScorePanel(QWidget):
 
         # Breakdown of total + section scores
         self.detail = QLabel("Run a scan to calculate your health score")
+        self.detail.setWordWrap(True)
         self.detail.setObjectName("status")
         mid.addWidget(self.detail)
         layout.addLayout(mid)
@@ -2743,9 +2744,7 @@ class RiskScorePanel(QWidget):
         label, colour = RISK.label()
         self.bar.setValue(s)
         self.bar.setFormat(f"{s} / 100 — detected findings severity (not coverage)")
-        self.bar.setStyleSheet(
-            f"QProgressBar::chunk{{background:{colour};border-radius:5px;}}"
-        )
+        set_theme_style(self.bar, lambda colour=theme_value(colour): f"QProgressBar::chunk{{background:{T['SELECTED'] if T.get('PROFESSIONAL') else colour};border-radius:5px;}}")
         h = RISK.findings.count("HIGH")
         m = RISK.findings.count("MEDIUM")
         l = RISK.findings.count("LOW")
@@ -2811,7 +2810,7 @@ class RiskScorePanel(QWidget):
         if days and days > 7:
             colour = T["DANGER"] if days > 30 else T["WARN"]
             self.update_lbl.setText(f"⏱ {msg}")
-            self.update_lbl.setStyleSheet(f"color:{colour};font-size:{fs(-1)}px;")
+            set_theme_style(self.update_lbl, lambda colour=theme_value(colour): f'color:{colour};font-size:{fs(-1)}px;')
 
 
 # ── Pre-action confirmation dialog ────────────────────────────────────────────
@@ -2829,9 +2828,7 @@ class PreActionDialog(QDialog):
 
         # Big clear title
         title = QLabel(f"⚠️  About to {action_type.upper()}: {name}")
-        title.setStyleSheet(
-            f"color:{T['WARN']};font-size:{fs(1)}px;font-weight:bold;"
-        )
+        set_theme_style(title, lambda : f"color:{T['WARN']};font-size:{fs(1)}px;font-weight:bold;")
         layout.addWidget(title)
 
         sep = QFrame()
@@ -2840,7 +2837,7 @@ class PreActionDialog(QDialog):
 
         # Show the exact command — no surprises
         cmd_label = QLabel("Command that will run with administrator access (sudo):")
-        cmd_label.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
+        set_theme_style(cmd_label, lambda : f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
         layout.addWidget(cmd_label)
 
         cmd_box = QTextEdit()
@@ -2848,10 +2845,7 @@ class PreActionDialog(QDialog):
         cmd_box.setReadOnly(True)
         cmd_box.setMaximumHeight(50)
         # Amber border so the command really stands out
-        cmd_box.setStyleSheet(
-            f"background:{T['BG_DARK']};color:{T['ACCENT']};"
-            f"border:2px solid {T['WARN']};border-radius:4px;font-size:{fs()}px;"
-        )
+        set_theme_style(cmd_box, lambda : f"background:{T['BG_DARK']};color:{T['ACCENT']};border:2px solid {T['WARN']};border-radius:4px;font-size:{fs()}px;")
         layout.addWidget(cmd_box)
 
         # Everyday Language explanation of what will happen
@@ -2864,10 +2858,7 @@ class PreActionDialog(QDialog):
 
         imp = QLabel(impact_text)
         imp.setWordWrap(True)
-        imp.setStyleSheet(
-            f"color:{T['TEXT_MAIN']};padding:8px;"
-            f"background:{T['BG_CARD']};border-radius:4px;font-size:{fs()}px;"
-        )
+        set_theme_style(imp, lambda : f"color:{T['TEXT_MAIN']};padding:8px;background:{T['BG_CARD']};border-radius:4px;font-size:{fs()}px;")
         layout.addWidget(imp)
 
         # Show undo command if we know it
@@ -2876,9 +2867,7 @@ class PreActionDialog(QDialog):
             ul = QLabel(f"↩  Available reverse operation: sudo {undo}\n"
                         "This may restore exposure; previous configuration/state is not guaranteed.")
             ul.setWordWrap(True)
-            ul.setStyleSheet(
-                f"color:{T['TEXT_DIM']};font-size:{fs(-2)}px;font-style:italic;"
-            )
+            set_theme_style(ul, lambda : f"color:{T['TEXT_DIM']};font-size:{fs(-2)}px;font-style:italic;")
             layout.addWidget(ul)
 
         # Optional Timeshift snapshot checkbox — only shown when timeshift
@@ -2891,18 +2880,14 @@ class PreActionDialog(QDialog):
                 "📸  Create a Timeshift snapshot first (rollback safety net)"
             )
             self.snapshot_cb.setChecked(True)
-            self.snapshot_cb.setStyleSheet(
-                f"color:{T['ACCENT']};font-size:{fs(-1)}px;"
-            )
+            set_theme_style(self.snapshot_cb, lambda : f"color:{T['ACCENT']};font-size:{fs(-1)}px;")
             layout.addWidget(self.snapshot_cb)
             note = QLabel(
                 "   Slow disks or near-full snapshot partitions can take "
                 "minutes or fail. If the snapshot fails the action is aborted."
             )
             note.setWordWrap(True)
-            note.setStyleSheet(
-                f"color:{T['TEXT_DIM']};font-size:{fs(-2)}px;"
-            )
+            set_theme_style(note, lambda : f"color:{T['TEXT_DIM']};font-size:{fs(-2)}px;")
             layout.addWidget(note)
 
         # Confirm/Cancel buttons
@@ -3009,16 +2994,12 @@ class ExplainDialog(QDialog):
                   "LOW": T["OK"], "INFO": T["ACCENT"]}
 
         title = QLabel(f"{icons.get(risk, '⚪')} {shapes.get(risk, risk)}  —  {name}")
-        title.setStyleSheet(
-            f"color:{T['ACCENT']};font-size:{fs(2)}px;font-weight:bold;"
-        )
+        set_theme_style(title, lambda : f"color:{T['ACCENT']};font-size:{fs(2)}px;font-weight:bold;")
         title.setWordWrap(True)
         layout.addWidget(title)
 
         rl = QLabel(f"Type: {ftype}")
-        rl.setStyleSheet(
-            f"color:{cols.get(risk, T['TEXT_DIM'])};font-weight:bold;font-size:{fs()}px;"
-        )
+        set_theme_style(rl, lambda cols=theme_value(cols), risk=theme_value(risk): f"color:{cols.get(risk, T['TEXT_DIM'])};font-weight:bold;font-size:{fs()}px;")
         layout.addWidget(rl)
 
         sep = QFrame()
@@ -3044,15 +3025,11 @@ class ExplainDialog(QDialog):
             ]:
                 if content:
                     sl = QLabel(section)
-                    sl.setStyleSheet(
-                        f"color:{T['ACCENT']};font-weight:bold;font-size:{fs()}px;"
-                    )
+                    set_theme_style(sl, lambda : f"color:{T['ACCENT']};font-weight:bold;font-size:{fs()}px;")
                     il.addWidget(sl)
                     cl = QLabel(content)
                     cl.setWordWrap(True)
-                    cl.setStyleSheet(
-                        f"color:{T['TEXT_MAIN']};padding-left:12px;font-size:{fs(-1)}px;"
-                    )
+                    set_theme_style(cl, lambda : f"color:{T['TEXT_MAIN']};padding-left:12px;font-size:{fs(-1)}px;")
                     il.addWidget(cl)
         else:
             # Generic fallback for findings we don't have detailed explanations for
@@ -3064,9 +3041,7 @@ class ExplainDialog(QDialog):
             }.get(risk, "")
             gen = QLabel(f"{detail}\n\n{rd}")
             gen.setWordWrap(True)
-            gen.setStyleSheet(
-                f"color:{T['TEXT_MAIN']};padding:8px;font-size:{fs(-1)}px;"
-            )
+            set_theme_style(gen, lambda : f"color:{T['TEXT_MAIN']};padding:8px;font-size:{fs(-1)}px;")
             il.addWidget(gen)
 
         # Show any relevant glossary terms at the bottom
@@ -3079,14 +3054,12 @@ class ExplainDialog(QDialog):
             sep2.setFrameShape(QFrame.Shape.HLine)
             il.addWidget(sep2)
             gl = QLabel("📖 Glossary")
-            gl.setStyleSheet(f"color:{T['ACCENT']};font-weight:bold;")
+            set_theme_style(gl, lambda : f"color:{T['ACCENT']};font-weight:bold;")
             il.addWidget(gl)
             for term, defn in found.items():
                 tl = QLabel(f"<b>{term}</b>: {defn}")
                 tl.setWordWrap(True)
-                tl.setStyleSheet(
-                    f"color:{T['TEXT_DIM']};padding-left:12px;font-size:{fs(-2)}px;"
-                )
+                set_theme_style(tl, lambda : f"color:{T['TEXT_DIM']};padding-left:12px;font-size:{fs(-2)}px;")
                 il.addWidget(tl)
 
         scroll.setWidget(inner)
@@ -3132,6 +3105,7 @@ class FindingsTable(QWidget, WorkerMixin):
         hl.setContentsMargins(8, 6, 8, 6)
         fhdr_lbl = QLabel(L("findings_hdr"))
         fhdr_lbl.setObjectName("heading")
+        fhdr_lbl.setWordWrap(True)
         hl.addWidget(fhdr_lbl)
         hl.addStretch()
 
@@ -3165,10 +3139,10 @@ class FindingsTable(QWidget, WorkerMixin):
         # Set sensible default widths
         self.table.setColumnWidth(0, 180)   # Name
         self.table.setColumnWidth(1, 90)    # Type
-        self.table.setColumnWidth(2, 110)   # Risk
+        self.table.setColumnWidth(2, 160)   # Risk
         self.table.setColumnWidth(3, 90)    # Tag
         self.table.setColumnWidth(4, 400)   # Detail — widest
-        self.table.setColumnWidth(5, 240)   # Actions — needs room for buttons
+        self.table.setColumnWidth(5, 280)   # Actions — needs room for buttons
         hh.setStretchLastSection(False)
 
         self.table.verticalHeader().setVisible(False)
@@ -3246,10 +3220,7 @@ class FindingsTable(QWidget, WorkerMixin):
 
     def _apply_ok_banner_style(self):
         """Re-apply banner style so theme changes update colours immediately."""
-        self._ok_banner.setStyleSheet(
-            f"background:{T['OK']}22;color:{T['OK']};border:1px solid {T['OK']};"
-            f"border-radius:6px;padding:14px;font-size:{fs()}px;font-weight:bold;"
-        )
+        set_theme_style(self._ok_banner, lambda : f"background:{T['OK']}22;color:{T['OK']};border:1px solid {T['OK']};border-radius:6px;padding:14px;font-size:{fs()}px;font-weight:bold;")
 
     def refresh_theme_styles(self):
         """Refresh styles that are computed from the active theme at runtime."""
@@ -3275,7 +3246,7 @@ class FindingsTable(QWidget, WorkerMixin):
 
         exp_btn = QPushButton("?")
         exp_btn.setObjectName("neutral")
-        exp_btn.setFixedSize(24, 22)
+        exp_btn.setFixedSize(32, 32)
         exp_btn.setStyleSheet(icon_btn_css)
         exp_btn.setToolTip("Explain this finding in everyday language")
         exp_btn.clicked.connect(
@@ -3286,7 +3257,7 @@ class FindingsTable(QWidget, WorkerMixin):
 
         ign_btn = QPushButton("✕")
         ign_btn.setObjectName("neutral")
-        ign_btn.setFixedSize(24, 22)
+        ign_btn.setFixedSize(32, 32)
         ign_btn.setStyleSheet(icon_btn_css)
         ign_btn.setToolTip("Ignore this finding for this session")
         ign_btn.clicked.connect(lambda _, n=name: self._ignore(n))
@@ -3295,7 +3266,7 @@ class FindingsTable(QWidget, WorkerMixin):
         if cmd_remove:
             rb = QPushButton("REMOVE")
             rb.setObjectName("danger")
-            rb.setFixedSize(78, 22)
+            rb.setFixedSize(88, 32)
             rb.setStyleSheet("padding: 0px 6px;")
             rb.setToolTip(f"Remove {name} from this system (asks for confirmation)")
             rb.clicked.connect(
@@ -3307,7 +3278,7 @@ class FindingsTable(QWidget, WorkerMixin):
         if cmd_disable:
             db = QPushButton("DISABLE")
             db.setObjectName("warn")
-            db.setFixedSize(78, 22)
+            db.setFixedSize(88, 32)
             db.setStyleSheet("padding: 0px 6px;")
             db.setToolTip(f"Disable {name} so it no longer runs (asks for confirmation)")
             db.clicked.connect(
@@ -3378,7 +3349,7 @@ class FindingsTable(QWidget, WorkerMixin):
             if col == 2:
                 # Risk column — bold and coloured
                 item.setForeground(QColor(rc))
-                item.setFont(QFont("", fs(-2), QFont.Weight.Bold))
+                item.setFont(QFont(UI_TYPOGRAPHY["family"], fs(-2), QFont.Weight.Bold))
             elif col == 3:
                 item.setForeground(QColor(tag_colour))
             else:
@@ -3399,7 +3370,7 @@ class FindingsTable(QWidget, WorkerMixin):
         # Build the ACTIONS cell — explain + ignore + remove/disable buttons
         cell = self._build_action_cell(name, ftype, risk, detail, cmd_remove, cmd_disable)
         self.table.setCellWidget(row, 5, cell)
-        self.table.setRowHeight(row, 34)  # Tight row; buttons are 22px
+        self.table.setRowHeight(row, 44)  # Tight row; buttons are 22px
 
         # Keep findings sorted: HIGH at top, then MEDIUM, LOW, INFO
         if self._bulk_depth == 0:
@@ -3476,7 +3447,7 @@ class FindingsTable(QWidget, WorkerMixin):
                     action.get("cmd_disable"),
                 )
             )
-            self.table.setRowHeight(i, 34)
+            self.table.setRowHeight(i, 44)
 
     @scan_operation
     def _ignore(self, name):
@@ -4287,7 +4258,7 @@ class GuidedWizard(QDialog, WorkerMixin):
             "Select a fix from the list. Each step explains exactly what it does "
             "before anything runs. Nothing happens until you click RUN."
         )
-        info.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
+        set_theme_style(info, lambda : f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
         info.setWordWrap(True)
         layout.addWidget(info)
 
@@ -4364,7 +4335,7 @@ class GuidedWizard(QDialog, WorkerMixin):
         sl = QVBoxLayout(sel_page)
         sl.addWidget(QLabel("Select a security fix to walk through:"))
         legend = QLabel("✅ = already configured    ⚠️ = not yet configured")
-        legend.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs(-2)}px;")
+        set_theme_style(legend, lambda : f"color:{T['TEXT_DIM']};font-size:{fs(-2)}px;")
         sl.addWidget(legend)
         self.fix_list = QListWidget()
         for name, _, check_fn, meta in self.fixes:
@@ -4386,9 +4357,7 @@ class GuidedWizard(QDialog, WorkerMixin):
         detail_page = QWidget()
         dl = QVBoxLayout(detail_page)
         self.fix_title = QLabel("")
-        self.fix_title.setStyleSheet(
-            f"color:{T['ACCENT']};font-size:{fs(1)}px;font-weight:bold;"
-        )
+        set_theme_style(self.fix_title, lambda : f"color:{T['ACCENT']};font-size:{fs(1)}px;font-weight:bold;")
         dl.addWidget(self.fix_title)
         self.fix_status = QLabel("")
         self.fix_status.setWordWrap(True)
@@ -4430,11 +4399,11 @@ class GuidedWizard(QDialog, WorkerMixin):
         self.fix_title.setText(name)
         if done:
             self.fix_status.setText("✅ Already configured — your system already has this protection.")
-            self.fix_status.setStyleSheet(f"color:{T['OK']};font-weight:bold;font-size:{fs(0)}px;padding:4px;")
+            set_theme_style(self.fix_status, lambda : f"color:{T['OK']};font-weight:bold;font-size:{fs(0)}px;padding:4px;")
             self.run_btn.setText("▶  RE-APPLY THIS FIX")
         else:
             self.fix_status.setText("⚠️ Not yet configured — review the steps below, then click RUN.")
-            self.fix_status.setStyleSheet(f"color:{T['WARN']};font-weight:bold;font-size:{fs(0)}px;padding:4px;")
+            set_theme_style(self.fix_status, lambda : f"color:{T['WARN']};font-weight:bold;font-size:{fs(0)}px;padding:4px;")
             self.run_btn.setText("▶  RUN THIS FIX NOW")
         steps, cmds = fn()
         self._cmds = cmds
@@ -4942,7 +4911,7 @@ class LynisPanel(QWidget, WorkerMixin):
             "Lynis is an industry-standard security auditing tool that checks your OS "
             "configuration against security best practices. Takes approximately 60 seconds."
         )
-        info.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
+        set_theme_style(info, lambda : f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
         info.setWordWrap(True)
         layout.addWidget(info)
 
@@ -5173,7 +5142,7 @@ class CvePanel(QWidget, WorkerMixin):
             "Checks your installed packages against Ubuntu's live CVE security database.\n"
             "Requires an internet connection. Only checks important system packages."
         )
-        info.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
+        set_theme_style(info, lambda : f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
         info.setWordWrap(True)
         layout.addWidget(info)
 
@@ -5409,7 +5378,7 @@ class CvePanel(QWidget, WorkerMixin):
         sev_item = QTableWidgetItem(f"{sev_icon} {highest.upper()}")
         sev_item.setForeground(QColor(sev_colour))
         self.cve_table.setItem(row, 3, sev_item)
-        self.cve_table.setRowHeight(row, 32)
+        self.cve_table.setRowHeight(row, 44)
 
         # Add HIGH/CRITICAL packages to the main findings table
         if highest in ("critical", "high") and count > 0:
@@ -5625,30 +5594,23 @@ class ToolCard(QFrame):
         }
         cat_lbl = QLabel(tool_data["cat"])
         cat_lbl.setFixedWidth(self.CAT_WIDTH)
-        cat_lbl.setStyleSheet(
-            f"color:{cat_colours.get(tool_data['cat'], T['TEXT_DIM'])};"
-            f"font-size:{fs(-2)}px;font-weight:bold;"
-        )
+        set_theme_style(cat_lbl, lambda cat_colours=theme_value(cat_colours), tool_data=theme_value(tool_data): f"color:{cat_colours.get(tool_data['cat'], T['TEXT_DIM'])};font-size:{fs(-2)}px;font-weight:bold;")
         layout.addWidget(cat_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
 
         info_col = QVBoxLayout()
         info_col.setSpacing(1)
         name_lbl = QLabel(tool_data["name"])
-        name_lbl.setStyleSheet(
-            f"color:{T['ACCENT']};font-weight:bold;font-size:{fs()}px;"
-        )
+        set_theme_style(name_lbl, lambda : f"color:{T['ACCENT']};font-weight:bold;font-size:{fs()}px;")
         info_col.addWidget(name_lbl)
         desc_lbl = QLabel(tool_data["desc"])
-        desc_lbl.setStyleSheet(
-            f"color:{T['TEXT_MAIN']};font-size:{fs(-2)}px;"
-        )
+        set_theme_style(desc_lbl, lambda : f"color:{T['TEXT_MAIN']};font-size:{fs(-2)}px;")
         desc_lbl.setWordWrap(True)
         info_col.addWidget(desc_lbl)
         layout.addLayout(info_col, 1)
 
         self.status_lbl = QLabel("Checking...")
         self.status_lbl.setFixedWidth(self.STATUS_WIDTH)
-        self.status_lbl.setStyleSheet(f"font-size:{fs(-2)}px;")
+        set_theme_style(self.status_lbl, lambda : f'font-size:{fs(-2)}px;')
         layout.addWidget(self.status_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.install_btn = QPushButton("INSTALL")
@@ -5679,15 +5641,11 @@ class ToolCard(QFrame):
         installed = pkg_installed(self.tool["name"])
         if installed:
             self.status_lbl.setText("✔ Installed")
-            self.status_lbl.setStyleSheet(
-                f"color:{T['OK']};font-size:{fs(-2)}px;font-weight:bold;"
-            )
+            set_theme_style(self.status_lbl, lambda : f"color:{T['OK']};font-size:{fs(-2)}px;font-weight:bold;")
             self.install_btn.setText("REINSTALL")
         else:
             self.status_lbl.setText("✗ Not installed")
-            self.status_lbl.setStyleSheet(
-                f"color:{T['WARN']};font-size:{fs(-2)}px;font-weight:bold;"
-            )
+            set_theme_style(self.status_lbl, lambda : f"color:{T['WARN']};font-size:{fs(-2)}px;font-weight:bold;")
 
     @scan_operation
     def _install(self):
@@ -5735,9 +5693,7 @@ class ToolCard(QFrame):
         dlg.setMinimumWidth(520)
         layout = QVBoxLayout(dlg)
         title = QLabel(f"🧰  {t['name']} — {t['cat']}")
-        title.setStyleSheet(
-            f"color:{T['ACCENT']};font-size:{fs(1)}px;font-weight:bold;"
-        )
+        set_theme_style(title, lambda : f"color:{T['ACCENT']};font-size:{fs(1)}px;font-weight:bold;")
         layout.addWidget(title)
         for section, content in [
             ("📌 What it does:",           t["desc"]),
@@ -5747,15 +5703,11 @@ class ToolCard(QFrame):
             ("▶  Run it with:",            t["run"]),
         ]:
             sl = QLabel(section)
-            sl.setStyleSheet(
-                f"color:{T['ACCENT']};font-weight:bold;font-size:{fs()}px;margin-top:6px;"
-            )
+            set_theme_style(sl, lambda : f"color:{T['ACCENT']};font-weight:bold;font-size:{fs()}px;margin-top:6px;")
             layout.addWidget(sl)
             cl = QLabel(content)
             cl.setWordWrap(True)
-            cl.setStyleSheet(
-                f"color:{T['TEXT_MAIN']};padding-left:12px;font-size:{fs(-1)}px;"
-            )
+            set_theme_style(cl, lambda : f"color:{T['TEXT_MAIN']};padding-left:12px;font-size:{fs(-1)}px;")
             layout.addWidget(cl)
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         btns.rejected.connect(dlg.close)
@@ -5820,9 +5772,7 @@ class ScheduleScanDialog(QDialog):
             "nothing is installed or modified."
         )
         info.setWordWrap(True)
-        info.setStyleSheet(
-            f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;padding:4px 0 10px 0;"
-        )
+        set_theme_style(info, lambda : f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;padding:4px 0 10px 0;")
         layout.addWidget(info)
 
         row = QHBoxLayout()
@@ -5842,9 +5792,7 @@ class ScheduleScanDialog(QDialog):
 
         self.current_lbl = QLabel()
         self.current_lbl.setWordWrap(True)
-        self.current_lbl.setStyleSheet(
-            f"color:{T['ACCENT']};padding:8px 0;font-size:{fs(-1)}px;"
-        )
+        set_theme_style(self.current_lbl, lambda : f"color:{T['ACCENT']};padding:8px 0;font-size:{fs(-1)}px;")
         layout.addWidget(self.current_lbl)
         self._refresh_current_label()
 
@@ -5985,7 +5933,7 @@ class ToolsPanel(QWidget):
         layout.addWidget(hdr)
 
         info = QLabel(L("sec_tools_sub"))
-        info.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
+        set_theme_style(info, lambda : f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
         layout.addWidget(info)
 
         # Category tab row — exclusive selection acts like a top menu
@@ -6053,26 +6001,20 @@ class ToolsPanel(QWidget):
 
         badge = QLabel("Monitoring")
         badge.setFixedWidth(78)
-        badge.setStyleSheet(
-            f"color:{T['ACCENT']};font-size:{fs(-2)}px;font-weight:bold;"
-        )
+        set_theme_style(badge, lambda : f"color:{T['ACCENT']};font-size:{fs(-2)}px;font-weight:bold;")
         row.addWidget(badge, 0, Qt.AlignmentFlag.AlignVCenter)
 
         info_col = QVBoxLayout()
         info_col.setSpacing(1)
         name_lbl = QLabel("📅  Schedule Automated Checks")
-        name_lbl.setStyleSheet(
-            f"color:{T['ACCENT']};font-weight:bold;font-size:{fs()}px;"
-        )
+        set_theme_style(name_lbl, lambda : f"color:{T['ACCENT']};font-weight:bold;font-size:{fs()}px;")
         info_col.addWidget(name_lbl)
         desc_lbl = QLabel(
             "Install a cron job that runs an upgradable-packages check "
             "on a daily, weekly, or monthly schedule and writes the "
             "result to a log file in your home directory."
         )
-        desc_lbl.setStyleSheet(
-            f"color:{T['TEXT_MAIN']};font-size:{fs(-2)}px;"
-        )
+        set_theme_style(desc_lbl, lambda : f"color:{T['TEXT_MAIN']};font-size:{fs(-2)}px;")
         desc_lbl.setWordWrap(True)
         info_col.addWidget(desc_lbl)
         row.addLayout(info_col, 1)
@@ -6094,17 +6036,9 @@ class ToolsPanel(QWidget):
         """Visual distinction for active vs inactive category tabs."""
         for b in self.cat_buttons.values():
             if b.isChecked():
-                b.setStyleSheet(
-                    f"background:{T['ACCENT']};color:{T['BG_DARK']};"
-                    f"border:1px solid {T['ACCENT']};border-radius:4px;"
-                    f"padding:2px 10px;font-weight:bold;"
-                )
+                set_theme_style(b, lambda : f"background:{T['ACCENT']};color:{T['BG_DARK']};border:1px solid {T['ACCENT']};border-radius:4px;padding:2px 10px;font-weight:bold;")
             else:
-                b.setStyleSheet(
-                    f"background:{T['BG_CARD']};color:{T['TEXT_MAIN']};"
-                    f"border:1px solid {T['BORDER']};border-radius:4px;"
-                    f"padding:2px 10px;"
-                )
+                set_theme_style(b, lambda : f"background:{T['BG_CARD']};color:{T['TEXT_MAIN']};border:1px solid {T['BORDER']};border-radius:4px;padding:2px 10px;")
 
     def _set_category(self, cat):
         for c, b in self.cat_buttons.items():
@@ -6174,7 +6108,7 @@ class UndoPanel(QWidget, WorkerMixin):
             "Pending after restart means the outcome is uncertain. "
             "Select a row for its ID and safety details."
         )
-        info.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
+        set_theme_style(info, lambda : f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
         info.setWordWrap(True)
         layout.addWidget(info)
 
@@ -6225,9 +6159,7 @@ class UndoPanel(QWidget, WorkerMixin):
             "No actions taken yet — actions appear here automatically as you fix things."
         )
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_label.setStyleSheet(
-            f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;padding:32px;"
-        )
+        set_theme_style(self.empty_label, lambda : f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;padding:32px;")
         self.empty_label.setWordWrap(True)
         layout.addWidget(self.empty_label)
 
@@ -6395,12 +6327,12 @@ class UndoPanel(QWidget, WorkerMixin):
         else:
             nl = QLabel("Historical / unavailable")
             nl.setToolTip(info["preview"])
-            nl.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs(-2)}px;")
+            set_theme_style(nl, lambda : f"color:{T['TEXT_DIM']};font-size:{fs(-2)}px;")
             bl.addWidget(nl)
 
         bl.addStretch()
         self.table.setCellWidget(row, 4, cell)
-        self.table.setRowHeight(row, 30)
+        self.table.setRowHeight(row, 44)
         self._update_empty_state()
 
     def _show_detail(self, row, col):
@@ -6565,10 +6497,13 @@ class SideBar(QWidget, WorkerMixin):
 
         # Scrollable menu area so controls never overlap on smaller window heights
         menu_scroll = QScrollArea()
+        menu_scroll.setObjectName("sidebar_scroll")
+        menu_scroll.viewport().setObjectName("sidebar_viewport")
         menu_scroll.setWidgetResizable(True)
         menu_scroll.setFrameShape(QFrame.Shape.NoFrame)
         menu_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         menu_host = QWidget()
+        menu_host.setObjectName("sidebar_menu")
         layout = QVBoxLayout(menu_host)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -6698,9 +6633,7 @@ class SideBar(QWidget, WorkerMixin):
             notice = QLabel(
                 "  ℹ  CVE checks require\n  an internet connection.\n  (Offline Mode)"
             )
-            notice.setStyleSheet(
-                f"color:{T['TEXT_DIM']};font-size:{fs(-2)}px;padding:8px;"
-            )
+            set_theme_style(notice, lambda : f"color:{T['NAV_DIM']};font-size:{fs(-2)}px;padding:8px;")
             sec_cve.addWidget(notice)
 
         # ── RECOMMENDED TOOLS ─────────────────────────────────────────────
@@ -6740,12 +6673,10 @@ class SideBar(QWidget, WorkerMixin):
                 rl = QHBoxLayout(row_w)
                 rl.setContentsMargins(0, 0, 0, 0)
                 ll = QLabel(f"{label2}:")
-                ll.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs(-3)}px;")
+                set_theme_style(ll, lambda : f"color:{T['NAV_DIM']};font-size:{fs(-3)}px;")
                 ll.setFixedWidth(55)
                 vl2 = QLabel(val)
-                vl2.setStyleSheet(
-                    f"color:{T['TEXT_MAIN']};font-size:{fs(-3)}px;"
-                )
+                set_theme_style(vl2, lambda : f"color:{T['NAV_TEXT']};font-size:{fs(-3)}px;")
                 rl.addWidget(ll)
                 rl.addWidget(vl2)
                 il.addWidget(row_w)
@@ -6754,15 +6685,13 @@ class SideBar(QWidget, WorkerMixin):
 
         days, msg = check_update_age()
         if days is not None:
-            colour = T["DANGER"] if days > 30 else (T["WARN"] if days > 7 else T["OK"])
+            colour = ThemeColor("NAV_DANGER" if days > 30 else "NAV_WARN" if days > 7 else "NAV_OK")
             ul = QLabel(f"⏱  {int(days)}d since last update")
-            ul.setStyleSheet(f"color:{colour};font-size:{fs(-3)}px;")
+            set_theme_style(ul, lambda colour=theme_value(colour): f'color:{colour};font-size:{fs(-3)}px;')
             il.addWidget(ul)
 
         built = QLabel(L("built_by"))
-        built.setStyleSheet(
-            f"color:{T['TEXT_DIM']};font-size:{fs(-4)}px;padding-top:4px;"
-        )
+        set_theme_style(built, lambda : f"color:{T['NAV_DIM']};font-size:{fs(-4)}px;padding-top:4px;")
         built.setWordWrap(True)
         il.addWidget(built)
         root_layout.addWidget(info_box, 0)
@@ -6773,17 +6702,9 @@ class SideBar(QWidget, WorkerMixin):
         the user just picked, even after the panel switches."""
         for b in self._menu_buttons:
             # Reset every other button to its section-btn default style.
+            b._ui_theme_style = None
             b.setStyleSheet("")
-        btn.setStyleSheet(
-            f"QPushButton#section_btn {{"
-            f"  text-align: left;"
-            f"  padding-left: 12px;"
-            f"  background: {T['BG_CARD']};"
-            f"  color: {T['ACCENT']};"
-            f"  border-left: 4px solid {T['ACCENT']};"
-            f"  font-weight: bold;"
-            f"}}"
-        )
+        set_theme_style(btn, lambda : f"QPushButton#section_btn {{  text-align: left;  padding-left: 12px;  background: {T['NAV_ACTIVE']};  color: {T['NAV_ACCENT']};  border-left: 4px solid {T['NAV_ACCENT']};  font-weight: bold;}}")
         self._active_menu_btn = btn
 
     def _update_section_header(self, section_id, expanded):
@@ -7368,19 +7289,20 @@ class ProfileDialog(QDialog):
         layout.addWidget(title)
 
         detected_label = PROFILES.get(detected_key, {}).get("label", "Unknown")
-        conf_colour = (T["OK"] if confidence > 60 else
-                       T["WARN"] if confidence > 30 else T["TEXT_DIM"])
-        msg = QLabel(
+        conf_role = "OK" if confidence > 60 else "WARN" if confidence > 30 else "TEXT_DIM"
+        msg = QLabel()
+        msg._ui_theme_text = lambda: (
             f"Based on what is currently running, this looks like a:\n\n"
             f"  <b>{detected_label}</b>  "
-            f"<span style='color:{conf_colour};font-size:{fs(-2)}px;'>"
+            f"<span style='color:{T[conf_role]};font-size:{fs(-2)}px;'>"
             f"({confidence}% confident)</span>\n\n"
             f"This affects what the scanner flags as normal versus suspicious.\n"
             f"Is that correct, or would you like to choose manually?"
         )
+        msg.setText(msg._ui_theme_text())
         msg.setWordWrap(True)
         msg.setTextFormat(Qt.TextFormat.RichText)
-        msg.setStyleSheet(f"font-size:{fs()}px;")
+        set_theme_style(msg, lambda : f'font-size:{fs()}px;')
         layout.addWidget(msg)
 
         self.btn_group = QButtonGroup(self)
@@ -7456,15 +7378,12 @@ class StartupWizard(QDialog):
         layout = QVBoxLayout(w)
         layout.setSpacing(16)
         title = QLabel(title_text)
-        title.setStyleSheet(
-            f"color:{T['ACCENT']};font-size:{fs(4)}px;"
-            f"font-weight:bold;letter-spacing:2px;"
-        )
+        set_theme_style(title, lambda : f"color:{T['ACCENT']};font-size:{fs(4)}px;font-weight:bold;letter-spacing:2px;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
         if subtitle:
             sub = QLabel(subtitle)
-            sub.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs()}px;")
+            set_theme_style(sub, lambda : f"color:{T['TEXT_DIM']};font-size:{fs()}px;")
             sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
             sub.setWordWrap(True)
             layout.addWidget(sub)
@@ -7491,9 +7410,7 @@ class StartupWizard(QDialog):
             "This is not a magic fix — it gives you information and options.\n"
             "You decide what to act on."
         )
-        intro.setStyleSheet(
-            f"color:{T['TEXT_MAIN']};font-size:{fs()}px;line-height:1.6;"
-        )
+        set_theme_style(intro, lambda : f"color:{T['TEXT_MAIN']};font-size:{fs()}px;line-height:1.6;")
         intro.setWordWrap(True)
         l1.addWidget(intro)
         l1.addStretch()
@@ -7574,9 +7491,7 @@ class StartupWizard(QDialog):
         # ── Page 4: Ready ──
         p4, l4 = self._page_wrapper("You are all set!", "")
         self.summary_lbl = QLabel("")
-        self.summary_lbl.setStyleSheet(
-            f"color:{T['TEXT_MAIN']};font-size:{fs()}px;"
-        )
+        set_theme_style(self.summary_lbl, lambda : f"color:{T['TEXT_MAIN']};font-size:{fs()}px;")
         self.summary_lbl.setWordWrap(True)
         l4.addWidget(self.summary_lbl)
 
@@ -7588,7 +7503,7 @@ class StartupWizard(QDialog):
             "  •  The face at the top improves as you fix issues\n"
             "  •  Use the ? button on any finding to understand it better"
         )
-        tip.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
+        set_theme_style(tip, lambda : f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
         tip.setWordWrap(True)
         l4.addWidget(tip)
         l4.addStretch()
@@ -7644,7 +7559,7 @@ class SessionSummaryDialog(QDialog):
         info = QLabel(
             "A everyday language breakdown of everything that happened this session."
         )
-        info.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
+        set_theme_style(info, lambda : f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
         layout.addWidget(info)
 
         sep = QFrame()
@@ -7689,7 +7604,7 @@ class RunEverythingSummaryDialog(QDialog):
             f"Host: {sysinfo['hostname']}  •  {sysinfo['os']}  •  "
             f"Kernel {sysinfo['kernel']}"
         )
-        subtitle.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
+        set_theme_style(subtitle, lambda : f"color:{T['TEXT_DIM']};font-size:{fs(-1)}px;")
         layout.addWidget(subtitle)
 
         # Score + plain-English headline
@@ -7702,12 +7617,10 @@ class RunEverythingSummaryDialog(QDialog):
         )
         score_row = QHBoxLayout()
         score_lbl = QLabel(f"Risk score: {score}/100")
-        score_lbl.setStyleSheet(
-            f"color:{score_colour};font-size:{fs(2)}px;font-weight:bold;"
-        )
+        set_theme_style(score_lbl, lambda score_colour=theme_value(score_colour): f'color:{score_colour};font-size:{fs(2)}px;font-weight:bold;')
         score_row.addWidget(score_lbl)
         label_lbl = QLabel(label)
-        label_lbl.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs()}px;")
+        set_theme_style(label_lbl, lambda : f"color:{T['TEXT_DIM']};font-size:{fs()}px;")
         score_row.addWidget(label_lbl)
         score_row.addStretch()
         layout.addLayout(score_row)
@@ -7718,11 +7631,7 @@ class RunEverythingSummaryDialog(QDialog):
 
         verdict = QLabel(self._verdict_text(score, high, medium, low))
         verdict.setWordWrap(True)
-        verdict.setStyleSheet(
-            f"color:{T['TEXT_MAIN']};font-size:{fs()}px;"
-            f"background:{T['BG_CARD']};border-radius:6px;padding:10px;"
-            f"margin-top:6px;"
-        )
+        set_theme_style(verdict, lambda : f"color:{T['TEXT_MAIN']};font-size:{fs()}px;background:{T['BG_CARD']};border-radius:6px;padding:10px;margin-top:6px;")
         layout.addWidget(verdict)
         coverage_text = QLabel(assessment_details(self.coverage))
         coverage_text.setWordWrap(True)
@@ -7754,10 +7663,7 @@ class RunEverythingSummaryDialog(QDialog):
         actions_hdr = QLabel(
             f"🧰  Remediation actions this session ({len(UNDO_LOG)})"
         )
-        actions_hdr.setStyleSheet(
-            f"color:{T['ACCENT']};font-weight:bold;font-size:{fs()}px;"
-            f"margin-top:10px;"
-        )
+        set_theme_style(actions_hdr, lambda : f"color:{T['ACCENT']};font-weight:bold;font-size:{fs()}px;margin-top:10px;")
         layout.addWidget(actions_hdr)
 
         actions_text = QTextEdit()
@@ -7821,9 +7727,7 @@ class RunEverythingSummaryDialog(QDialog):
         one of the two buckets (good / needs-fixing)."""
         col = QVBoxLayout()
         hdr = QLabel(title)
-        hdr.setStyleSheet(
-            f"color:{colour};font-weight:bold;font-size:{fs()}px;margin-top:8px;"
-        )
+        set_theme_style(hdr, lambda colour=theme_value(colour): f'color:{colour};font-weight:bold;font-size:{fs()}px;margin-top:8px;')
         col.addWidget(hdr)
 
         lst = QTextEdit()
@@ -7844,11 +7748,11 @@ class RunEverythingSummaryDialog(QDialog):
             lst.setPlainText("\n".join(lines))
         else:
             lst.setPlainText(empty_hint_none)
-            lst.setStyleSheet(f"color:{T['TEXT_DIM']};")
+            set_theme_style(lst, lambda : f"color:{T['TEXT_DIM']};")
         col.addWidget(lst)
 
         hint = QLabel(empty_hint_some if items else "")
-        hint.setStyleSheet(f"color:{T['TEXT_DIM']};font-size:{fs(-2)}px;")
+        set_theme_style(hint, lambda : f"color:{T['TEXT_DIM']};font-size:{fs(-2)}px;")
         hint.setWordWrap(True)
         col.addWidget(hint)
         return col
@@ -7907,6 +7811,24 @@ def _collect_findings_by_section(findings_widget):
         else:
             sections["info"].append(row)
     return sections
+
+
+
+def _render_finding_rows(rows):
+    """Render the report's five finding columns; treat all cell values as text."""
+    colors = {"HIGH": "#ff4444", "MEDIUM": "#f0a500",
+              "LOW": "#3fb950", "INFO": "#00d9ff"}
+    rendered = []
+    for row in rows:
+        risk = row.get("risk", "")
+        level = risk.split()[-1].upper() if risk.split() else ""
+        color = colors.get(level, "#8b949e")
+        cells = []
+        for key in ("name", "ftype", "risk", "tag", "detail"):
+            style = f" style='color:{color};'" if key == "risk" else ""
+            cells.append(f"<td{style}>{html.escape(row.get(key, ''))}</td>")
+        rendered.append("<tr>" + "".join(cells) + "</tr>")
+    return "".join(rendered)
 
 
 def _build_exec_statement(score, high, medium, low, actions_taken, coverage=None):
@@ -8156,15 +8078,16 @@ class AuditDashboard(QMainWindow):
         tb.setContentsMargins(10, 6, 10, 6)
         tb.setSpacing(6)
 
-        top_row = QHBoxLayout()
+        top_row = QGridLayout()
+        preference_groups = []
         top_row.setContentsMargins(0, 0, 0, 0)
         top_row.setSpacing(8)
         title_lbl = QLabel(L("title"))
         title_lbl.setObjectName("app_title")   # styled via make_style()
         title_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         title_lbl.setMinimumWidth(280)
-        top_row.addWidget(title_lbl, 1)
-        top_row.addStretch()
+        top_row.addWidget(title_lbl,0,0)
+        top_row.setColumnStretch(0,1)
 
         # Mode / Language / Theme dropdowns
         for label2, items2, width2, attr2, handler2 in [
@@ -8174,13 +8097,20 @@ class AuditDashboard(QMainWindow):
         ]:
             ll = QLabel(label2)
             ll.setObjectName("status")
-            top_row.addWidget(ll)
+            group = QWidget()
+            group_layout = QHBoxLayout(group)
+            group_layout.setContentsMargins(0,0,0,0)
+            group_layout.addWidget(ll)
+            preference_groups.append(group)
+            top_row.addWidget(group,0,len(preference_groups))
             cb = QComboBox()
             cb.addItems(items2)
             cb.setFixedWidth(width2)
             setattr(self, attr2, cb)
             cb.currentTextChanged.connect(handler2)
-            top_row.addWidget(cb)
+            cb.setAccessibleName(label2.rstrip(":"))
+            ll.setBuddy(cb)
+            group_layout.addWidget(cb)
 
         self.theme_lock_btn = QPushButton()
         self.theme_lock_btn.setObjectName("neutral")
@@ -8188,11 +8118,14 @@ class AuditDashboard(QMainWindow):
         self.theme_lock_btn.setChecked(self.theme_locked)
         self.theme_lock_btn.setFixedHeight(30)
         self.theme_lock_btn.clicked.connect(self._toggle_theme_lock)
-        top_row.addWidget(self.theme_lock_btn)
+        preference_groups.append(self.theme_lock_btn)
+        top_row.addWidget(self.theme_lock_btn,0,len(preference_groups))
+        tbw._ui_header = (top_row,title_lbl,preference_groups)
         self._update_theme_lock_button()
         tb.addLayout(top_row)
 
-        actions_row = QHBoxLayout()
+        actions_row = QGridLayout()
+        toolbar_buttons = []
         actions_row.setContentsMargins(0, 0, 0, 0)
         actions_row.setSpacing(8)
 
@@ -8221,8 +8154,9 @@ class AuditDashboard(QMainWindow):
             b.setFixedHeight(30)
             b.setToolTip(tip3)
             b.clicked.connect(handler3)
-            actions_row.addWidget(b)
-        actions_row.addStretch()
+            actions_row.addWidget(b,0,len(toolbar_buttons))
+            toolbar_buttons.append(b)
+        tbw._ui_actions = (actions_row,toolbar_buttons)
         tb.addLayout(actions_row)
         root.addWidget(tbw)
 
@@ -8405,18 +8339,16 @@ class AuditDashboard(QMainWindow):
     def _change_theme(self, name):
         """Switch the colour theme — updates palette and stylesheet.
 
-        Only app.setPalette + app.setStyleSheet are needed.  Any widget-level
-        setStyleSheet call with a bare rule (no selector) cascades to ALL child
-        widgets and *overrides* the global stylesheet — that is the bug that
-        caused section buttons, section sub-labels and the sidebar to stay stuck
-        on the startup theme even after switching.  All persistent widgets are
-        now styled via objectNames in make_style() so no widget-level overrides
-        are needed here.
+        Rebuild the shared palette/stylesheet and replay bound component styles.
+        Existing table and console colours follow their semantic roles; presentation
+        changes do not clear findings, coverage or other application state.
         """
+        previous = dict(T)
         apply_theme(name)
         app = QApplication.instance()
         app.setPalette(build_palette())
         app.setStyleSheet(make_style())
+        refresh_theme_widgets(app, previous)
         # Refresh the risk bar chunk colour — it only updates normally when the
         # risk score changes, so force a redraw on theme change.
         if hasattr(self, "risk_panel"):
@@ -8436,12 +8368,12 @@ class AuditDashboard(QMainWindow):
         if self.theme_locked:
             self.theme_lock_btn.setText("🔒 Theme Locked")
             self.theme_lock_btn.setToolTip(
-                "Locked: this theme will be used on startup.\nClick to unlock (startup returns to Light mode)."
+                "Locked: this theme will be used on startup.\nClick to unlock (startup returns to Enterprise Workspace)."
             )
         else:
             self.theme_lock_btn.setText("🔓 Lock Theme")
             self.theme_lock_btn.setToolTip(
-                "Unlocked: app starts in Light mode.\nClick to lock the current theme for startup."
+                "Unlocked: app starts in Enterprise Workspace.\nClick to lock the current theme for startup."
             )
 
     def _toggle_theme_lock(self, checked):
@@ -8456,7 +8388,7 @@ class AuditDashboard(QMainWindow):
         else:
             save_config("prefs", "theme_locked", "false")
             self.terminal.append_info(
-                "Theme unlocked: startup will default to Light mode."
+                "Theme unlocked: startup will default to Enterprise Workspace."
             )
         self._update_theme_lock_button()
 
@@ -8647,9 +8579,11 @@ def main():
     configure_qt_platform_theme()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    app._foundation_events = FoundationEvents(app)
+    app.installEventFilter(app._foundation_events)
     app.undo_panel_ref = None  # Will be set once the main window is built
 
-    # Load startup theme FIRST (Light by default unless theme lock is enabled)
+    # Load startup theme FIRST (Enterprise Workspace by default unless theme lock is enabled)
     cfg          = load_config()
     startup_theme = get_startup_theme(cfg)
     apply_theme(startup_theme)
@@ -8667,10 +8601,11 @@ def main():
         wizard_result = wiz
         # Mark as no longer first run
         save_config("prefs", "theme_locked", "false")
-        save_config("prefs", "locked_theme", "Light")
+        save_config("prefs", "locked_theme", "Enterprise Workspace")
         save_config("prefs", "language", "EN")
 
     win = AuditDashboard(wizard_result=wizard_result if first_run else None)
+    refresh_theme_widgets(app)
     win.show()
     sys.exit(app.exec())
 

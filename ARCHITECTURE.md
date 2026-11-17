@@ -6,6 +6,27 @@ Last reviewed: 2026-05-03
 
 ---
 
+## UI foundation (Stage 2)
+
+Presentation remains PyQt6 Widgets with the existing pages and actions. `THEMES`
+provides seven palettes; `apply_theme()` derives semantic content, navigation,
+status and control colours. `UI_METRICS` and `UI_TYPOGRAPHY` centralize shared
+sizes and type choices, while `fs()` preserves existing font scaling.
+`build_palette()` and `make_style()` supply the common Fusion component skin.
+
+`set_theme_style()` retains a recipe for component-specific styles rather than
+freezing construction-time colours. `refresh_theme_widgets()` reapplies recipes,
+updates table/console presentation and adjusts geometry without clearing evidence.
+Console spans retain colour roles in Qt text-format metadata. `FoundationEvents`
+handles display sizing and responsive toolbar reflow; it does not consume events
+or own workers. Risk calculations, coverage, reports and operation ownership remain
+separate from these presentation helpers. Locked themes remain persistent; unlocked
+startup defaults to Enterprise Workspace. Legacy palettes share the new component
+skin, with muted Hacker/Solarized text adjusted for readability.
+
+This section describes the Stage 2 implementation only; the historical component
+line references below have not been comprehensively refreshed.
+
 ## Component table (file → role)
 
 The application is a single-file PyQt6 GUI. All components live in [linux-security-dashboard.py](linux-security-dashboard.py); line numbers below pin each component.
@@ -19,7 +40,7 @@ The application is a single-file PyQt6 GUI. All components live in [linux-securi
 | `load_config()` / `save_config()` / `config_bool()` / `get_startup_theme()` | [78-115](linux-security-dashboard.py#L78-L115) | INI preference storage with atomic temp-file replace |
 | `valid_pkg()` / `PKG_RE` | [119-122](linux-security-dashboard.py#L119-L122) | Package-name validator — gate before every package-manager argv |
 | `strip_ansi()` | [126-128](linux-security-dashboard.py#L126-L128) | Drop terminal colour escapes before display in QTextEdit |
-| `THEMES` / `apply_theme()` / `build_palette()` / `make_style()` | [141-440](linux-security-dashboard.py#L141-L440) | 5 colour themes; QPalette + global Qt stylesheet rebuilt on theme/font change |
+| `THEMES` / `apply_theme()` / `build_palette()` / `make_style()` | [141-440](linux-security-dashboard.py#L141-L440) | 7 colour themes; QPalette + global Qt stylesheet rebuilt on theme/font change |
 | `LANGS` / `L()` | [445-574](linux-security-dashboard.py#L445-L574) | 12-language UI string lookup with EN fallback |
 | `detect_distro()` / `pkg_install()` / `pkg_remove()` / `pkg_installed()` | [577-632](linux-security-dashboard.py#L577-L632) | Distro detection + apt/dnf/pacman command generation |
 | `check_update_age()` | [634-657](linux-security-dashboard.py#L634-L657) | Reads apt mtimes to drive the "days since update" health face copy |

@@ -21,7 +21,7 @@ NS = dict(wraps=wraps, uuid=uuid, re=re, shlex=shlex, PKG_MGR='apt', json=json, 
           subprocess=subprocess, QThread=QThread, pyqtSignal=pyqtSignal,
           T={'OK': 'green'}, strip_ansi=lambda text: text,
           UndoHistoryError=StorageError, UNDO_LOG=[])
-NAMES = {'ScanOwnership','scan_owner','scan_join','scan_operation','bind_scan_worker','scan_slot','UNDO_SERVICE_TARGETS', 'UNDO_PACKAGE_RE', 'build_undo_argv',
+NAMES = {'ThemeColor','theme_value','set_theme_style','ScanOwnership','scan_owner','scan_join','scan_operation','bind_scan_worker','scan_slot','UNDO_SERVICE_TARGETS', 'UNDO_PACKAGE_RE', 'build_undo_argv',
          'make_undo_operation', 'make_undo_cmd', 'UNDO_METADATA_FIELDS',
          'MAX_UNDO_LINE_BYTES', 'MAX_UNDO_HISTORY_BYTES', 'normalize_undo_record',
          'undo_presentation', 'save_undo_entry', 'load_undo_log', 'CommandWorker'}

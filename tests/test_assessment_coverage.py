@@ -17,7 +17,7 @@ for node in TREE.body:
     name = node.name if isinstance(node, ast.FunctionDef) else None
     if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
         name = node.targets[0].id
-    if name in {'run_quick_checks','run_temperature_check','_SENSORS_LINE_RE', '_build_exec_statement'}:
+    if name in {'run_quick_checks','run_temperature_check','_SENSORS_LINE_RE', '_build_exec_statement', '_render_finding_rows'}:
         exec(compile(ast.Module(body=[node],type_ignores=[]),'<production>','exec'),NS)
 
 
@@ -103,7 +103,7 @@ class AssessmentCoverage(unittest.TestCase):
         with patch.dict(NS,html=html,datetime=datetime,RISK=risk,PROFILES={},TOOLS_DATA=[],UNDO_LOG=[],
                         get_system_info=lambda:{k:'fixture' for k in ('hostname','os','kernel','arch','cpu','ram','uptime')},
                         _collect_findings_by_section=lambda f:{'scan':[],'checks':[],'cve':[],'info':[]},
-                        _render_finding_rows=lambda rows:'',L=lambda key:key):
+                        L=lambda key:key):
             for mode in ('executive','technical'):
                 report=generate(display,'fixture',mode)
                 self.assertIn('Incomplete assessment',report)

@@ -1,5 +1,37 @@
 # Running Tests
 
+For the pre-redesign behaviour contract and deterministic fixture captures, see
+[UI behaviour baseline](ui_behaviour_baseline.md). It preserves the original full-report failure and records the separately approved
+UI-BL-001 correction and successful report captures.
+
+## UI foundation regression checks
+
+`tests/test_ui_foundation.py` adds six pure production-definition tests for all
+seven palettes, default/locked preferences, shared component styles, semantic
+style refresh, professional palette contrast and font/geometry tokens. Existing
+AST-based fixtures load the new presentation helpers without running startup.
+
+The Stage 2 GUI review runs the actual QApplication and widgets on the Ubuntu
+Wayland desktop with synthetic findings, mocked host probes and temporary user
+state. It exercises all seven appearances, existing pages, representative dialogs,
+font scaling, a smaller window, focus traversal and normal close. It checks action
+containment, severity widths, existing-widget style refresh and table colours.
+It is a fixture-driven GUI check, not a live security scan or privileged workflow
+validation. Screenshots and the temporary driver are outside the repository.
+The deterministic Stage 1 comparison remains:
+
+```bash
+python3 -B tests/capture_ui_baseline.py --check tests/fixtures/ui_baseline_ui_bl_001
+```
+
+Stage 2 executed result (2026-11-17): **217 tests, OK** (the 211-test
+baseline plus six foundation tests); corrected capture comparison **MATCH** and
+`git diff --check` clean. The live GUI fixture exited normally with empty stderr;
+all seven palettes and the larger-font/smaller-window containment checks passed.
+Tab traversal passed. Two ResourceWarnings originate from pre-existing direct
+SQLite connections in `tests/test_undo_history_store.py` (the lifecycle-mutation
+test); allocation tracing confirmed their origin. They were not changed here.
+
 ## Automated command-outcome regression tests
 
 ```bash
@@ -306,3 +338,27 @@ closure. It validates real Qt widgets/startup while protecting existing user dat
 it is not a scan, privileged-operation or unmodified end-to-end application test.
 No system packages, schemas, GNOME values or existing preferences were changed.
 Other desktop/Qt versions and explicit third-party platform themes are unverified.
+
+## UI-BL-001 real HTML report regression
+
+`tests/test_html_reports.py` invokes production finding collection, scoring, coverage
+wording, row rendering and the full report generator through isolated synthetic
+fixtures. It never substitutes `_render_finding_rows`. External host/tool probes
+and Qt widget endpoints are inert. Simple/Expert mode is distinct from the
+Executive/Technical report format: all four combinations are exercised.
+
+Tests cover complete/incomplete coverage, exact fixture scores and row selection,
+HTML escaping of every finding cell, fixed severity colours, empty rows, hidden
+search results and mode changes without backfill. Before the helper was restored,
+the matrix failed and no complete HTML was returned. After correction, four new
+methods and the full 211-test suite passed. The older coverage export test now also
+uses the real renderer. No browser or full GUI rendering was tested.
+
+```bash
+python3 -B -m unittest discover -s tests -p test_html_reports.py -q
+python3 -B tests/capture_ui_baseline.py --check tests/fixtures/ui_baseline_ui_bl_001
+```
+
+The corrected captures match; original Stage 1 captures remain available for
+comparison. Only report-generation outcomes changed; finding/score/coverage and
+sequence fields plus the four original coverage fragments are unchanged.

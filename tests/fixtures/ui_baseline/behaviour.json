@@ -1,0 +1,1629 @@
+{
+  "cases": {
+    "all-failed": {
+      "banner": false,
+      "complete": false,
+      "coverage": {
+        "active": false,
+        "id": "fixture-run",
+        "outcomes": [
+          {
+            "name": "Unused software",
+            "outcome": "failed",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Open network ports",
+            "outcome": "failed",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Risky services",
+            "outcome": "failed",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Quick security checks",
+            "outcome": "failed",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Hardware temperatures",
+            "outcome": "failed",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "CVE vulnerabilities",
+            "outcome": "failed",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Available updates",
+            "outcome": "failed",
+            "reason": "Synthetic evidence"
+          }
+        ]
+      },
+      "findings": {
+        "checks": [],
+        "cve": [],
+        "info": [],
+        "scan": []
+      },
+      "initial_mode": "expert",
+      "mode": "expert",
+      "reports": {
+        "executive": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        },
+        "technical": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        }
+      },
+      "row_order": [],
+      "score": 0,
+      "score_inputs": [],
+      "verdict": "Assessment failed or coverage is unknown. No findings detected does not establish that the system is safe.",
+      "visible_rows": 0
+    },
+    "complete-no-findings": {
+      "banner": true,
+      "complete": true,
+      "coverage": {
+        "active": false,
+        "id": "fixture-run",
+        "outcomes": [
+          {
+            "name": "Unused software",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Open network ports",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Risky services",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Quick security checks",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Hardware temperatures",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "CVE vulnerabilities",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Available updates",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          }
+        ]
+      },
+      "findings": {
+        "checks": [],
+        "cve": [],
+        "info": [],
+        "scan": []
+      },
+      "initial_mode": "expert",
+      "mode": "expert",
+      "reports": {
+        "executive": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        },
+        "technical": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        }
+      },
+      "row_order": [],
+      "score": 0,
+      "score_inputs": [],
+      "verdict": "Complete assessment — no findings detected within these seven checks.",
+      "visible_rows": 0
+    },
+    "expert-complete": {
+      "banner": false,
+      "complete": true,
+      "coverage": {
+        "active": false,
+        "id": "fixture-run",
+        "outcomes": [
+          {
+            "name": "Unused software",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Open network ports",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Risky services",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Quick security checks",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Hardware temperatures",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "CVE vulnerabilities",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Available updates",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          }
+        ]
+      },
+      "findings": {
+        "checks": [
+          {
+            "detail": "Synthetic hardening evidence.",
+            "ftype": "HARDENING",
+            "name": "fixture-hardening",
+            "risk": "🟢 ● LOW",
+            "tag": "HARDEN"
+          }
+        ],
+        "cve": [
+          {
+            "detail": "Synthetic CVE observation; applicability is not asserted.",
+            "ftype": "CVE",
+            "name": "fixture-cve",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "CVE"
+          },
+          {
+            "detail": "Synthetic available update; excluded from risk score.",
+            "ftype": "OUTDATED",
+            "name": "fixture-update",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "UPDATE"
+          }
+        ],
+        "info": [],
+        "scan": [
+          {
+            "detail": "Synthetic package observation; not a live host finding.",
+            "ftype": "SERVICE",
+            "name": "fixture-service <demo>",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "SERVICE"
+          },
+          {
+            "detail": "Synthetic listener observation.",
+            "ftype": "NETWORK",
+            "name": "fixture:631",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "NETWORK"
+          },
+          {
+            "detail": "Synthetic inventory entry.",
+            "ftype": "LEFTOVER",
+            "name": "fixture-inventory",
+            "risk": "🔵 ℹ INFO",
+            "tag": "LEFTOVER"
+          }
+        ]
+      },
+      "initial_mode": "expert",
+      "mode": "expert",
+      "reports": {
+        "executive": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        },
+        "technical": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        }
+      },
+      "row_order": [
+        "fixture-service <demo>",
+        "fixture-cve",
+        "fixture:631",
+        "fixture-update",
+        "fixture-hardening",
+        "fixture-inventory"
+      ],
+      "score": 51,
+      "score_inputs": [
+        "HIGH",
+        "MEDIUM",
+        "LOW",
+        "INFO",
+        "HIGH"
+      ],
+      "verdict": "Complete assessment — findings need attention.",
+      "visible_rows": 6
+    },
+    "expert-filtered": {
+      "banner": false,
+      "complete": true,
+      "coverage": {
+        "active": false,
+        "id": "fixture-run",
+        "outcomes": [
+          {
+            "name": "Unused software",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Open network ports",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Risky services",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Quick security checks",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Hardware temperatures",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "CVE vulnerabilities",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Available updates",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          }
+        ]
+      },
+      "findings": {
+        "checks": [
+          {
+            "detail": "Synthetic hardening evidence.",
+            "ftype": "HARDENING",
+            "name": "fixture-hardening",
+            "risk": "🟢 ● LOW",
+            "tag": "HARDEN"
+          }
+        ],
+        "cve": [
+          {
+            "detail": "Synthetic CVE observation; applicability is not asserted.",
+            "ftype": "CVE",
+            "name": "fixture-cve",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "CVE"
+          },
+          {
+            "detail": "Synthetic available update; excluded from risk score.",
+            "ftype": "OUTDATED",
+            "name": "fixture-update",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "UPDATE"
+          }
+        ],
+        "info": [],
+        "scan": [
+          {
+            "detail": "Synthetic package observation; not a live host finding.",
+            "ftype": "SERVICE",
+            "name": "fixture-service <demo>",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "SERVICE"
+          },
+          {
+            "detail": "Synthetic listener observation.",
+            "ftype": "NETWORK",
+            "name": "fixture:631",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "NETWORK"
+          },
+          {
+            "detail": "Synthetic inventory entry.",
+            "ftype": "LEFTOVER",
+            "name": "fixture-inventory",
+            "risk": "🔵 ℹ INFO",
+            "tag": "LEFTOVER"
+          }
+        ]
+      },
+      "initial_mode": "expert",
+      "mode": "expert",
+      "reports": {
+        "executive": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        },
+        "technical": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        }
+      },
+      "row_order": [
+        "fixture-service <demo>",
+        "fixture-cve",
+        "fixture:631",
+        "fixture-update",
+        "fixture-hardening",
+        "fixture-inventory"
+      ],
+      "score": 51,
+      "score_inputs": [
+        "HIGH",
+        "MEDIUM",
+        "LOW",
+        "INFO",
+        "HIGH"
+      ],
+      "verdict": "Complete assessment — findings need attention.",
+      "visible_rows": 1
+    },
+    "expert-then-simple": {
+      "banner": false,
+      "complete": true,
+      "coverage": {
+        "active": false,
+        "id": "fixture-run",
+        "outcomes": [
+          {
+            "name": "Unused software",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Open network ports",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Risky services",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Quick security checks",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Hardware temperatures",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "CVE vulnerabilities",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Available updates",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          }
+        ]
+      },
+      "findings": {
+        "checks": [
+          {
+            "detail": "Synthetic hardening evidence.",
+            "ftype": "HARDENING",
+            "name": "fixture-hardening",
+            "risk": "🟢 ● LOW",
+            "tag": "HARDEN"
+          }
+        ],
+        "cve": [
+          {
+            "detail": "Synthetic CVE observation; applicability is not asserted.",
+            "ftype": "CVE",
+            "name": "fixture-cve",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "CVE"
+          },
+          {
+            "detail": "Synthetic available update; excluded from risk score.",
+            "ftype": "OUTDATED",
+            "name": "fixture-update",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "UPDATE"
+          }
+        ],
+        "info": [],
+        "scan": [
+          {
+            "detail": "Synthetic package observation; not a live host finding.",
+            "ftype": "SERVICE",
+            "name": "fixture-service <demo>",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "SERVICE"
+          },
+          {
+            "detail": "Synthetic listener observation.",
+            "ftype": "NETWORK",
+            "name": "fixture:631",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "NETWORK"
+          },
+          {
+            "detail": "Synthetic inventory entry.",
+            "ftype": "LEFTOVER",
+            "name": "fixture-inventory",
+            "risk": "🔵 ℹ INFO",
+            "tag": "LEFTOVER"
+          }
+        ]
+      },
+      "initial_mode": "expert",
+      "mode": "simple",
+      "reports": {
+        "executive": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        },
+        "technical": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        }
+      },
+      "row_order": [
+        "fixture-service <demo>",
+        "fixture-cve",
+        "fixture:631",
+        "fixture-update",
+        "fixture-hardening",
+        "fixture-inventory"
+      ],
+      "score": 51,
+      "score_inputs": [
+        "HIGH",
+        "MEDIUM",
+        "LOW",
+        "INFO",
+        "HIGH"
+      ],
+      "verdict": "Complete assessment — findings need attention.",
+      "visible_rows": 6
+    },
+    "legacy-three": {
+      "banner": false,
+      "complete": false,
+      "coverage": {
+        "active": false,
+        "id": "fixture-run",
+        "outcomes": [
+          {
+            "name": "Unused software",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Open network ports",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Risky services",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          }
+        ]
+      },
+      "findings": {
+        "checks": [
+          {
+            "detail": "Synthetic hardening evidence.",
+            "ftype": "HARDENING",
+            "name": "fixture-hardening",
+            "risk": "🟢 ● LOW",
+            "tag": "HARDEN"
+          }
+        ],
+        "cve": [
+          {
+            "detail": "Synthetic CVE observation; applicability is not asserted.",
+            "ftype": "CVE",
+            "name": "fixture-cve",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "CVE"
+          },
+          {
+            "detail": "Synthetic available update; excluded from risk score.",
+            "ftype": "OUTDATED",
+            "name": "fixture-update",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "UPDATE"
+          }
+        ],
+        "info": [],
+        "scan": [
+          {
+            "detail": "Synthetic package observation; not a live host finding.",
+            "ftype": "SERVICE",
+            "name": "fixture-service <demo>",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "SERVICE"
+          },
+          {
+            "detail": "Synthetic listener observation.",
+            "ftype": "NETWORK",
+            "name": "fixture:631",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "NETWORK"
+          },
+          {
+            "detail": "Synthetic inventory entry.",
+            "ftype": "LEFTOVER",
+            "name": "fixture-inventory",
+            "risk": "🔵 ℹ INFO",
+            "tag": "LEFTOVER"
+          }
+        ]
+      },
+      "initial_mode": "expert",
+      "mode": "expert",
+      "reports": {
+        "executive": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        },
+        "technical": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        }
+      },
+      "row_order": [
+        "fixture-service <demo>",
+        "fixture-cve",
+        "fixture:631",
+        "fixture-update",
+        "fixture-hardening",
+        "fixture-inventory"
+      ],
+      "score": 51,
+      "score_inputs": [
+        "HIGH",
+        "MEDIUM",
+        "LOW",
+        "INFO",
+        "HIGH"
+      ],
+      "verdict": "Incomplete assessment — findings need attention; additional issues may be undetected.",
+      "visible_rows": 6
+    },
+    "one-cancelled": {
+      "banner": false,
+      "complete": false,
+      "coverage": {
+        "active": false,
+        "id": "fixture-run",
+        "outcomes": [
+          {
+            "name": "Unused software",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Open network ports",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Risky services",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Quick security checks",
+            "outcome": "cancelled",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Hardware temperatures",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "CVE vulnerabilities",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Available updates",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          }
+        ]
+      },
+      "findings": {
+        "checks": [
+          {
+            "detail": "Synthetic hardening evidence.",
+            "ftype": "HARDENING",
+            "name": "fixture-hardening",
+            "risk": "🟢 ● LOW",
+            "tag": "HARDEN"
+          }
+        ],
+        "cve": [
+          {
+            "detail": "Synthetic CVE observation; applicability is not asserted.",
+            "ftype": "CVE",
+            "name": "fixture-cve",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "CVE"
+          },
+          {
+            "detail": "Synthetic available update; excluded from risk score.",
+            "ftype": "OUTDATED",
+            "name": "fixture-update",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "UPDATE"
+          }
+        ],
+        "info": [],
+        "scan": [
+          {
+            "detail": "Synthetic package observation; not a live host finding.",
+            "ftype": "SERVICE",
+            "name": "fixture-service <demo>",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "SERVICE"
+          },
+          {
+            "detail": "Synthetic listener observation.",
+            "ftype": "NETWORK",
+            "name": "fixture:631",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "NETWORK"
+          },
+          {
+            "detail": "Synthetic inventory entry.",
+            "ftype": "LEFTOVER",
+            "name": "fixture-inventory",
+            "risk": "🔵 ℹ INFO",
+            "tag": "LEFTOVER"
+          }
+        ]
+      },
+      "initial_mode": "expert",
+      "mode": "expert",
+      "reports": {
+        "executive": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        },
+        "technical": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        }
+      },
+      "row_order": [
+        "fixture-service <demo>",
+        "fixture-cve",
+        "fixture:631",
+        "fixture-update",
+        "fixture-hardening",
+        "fixture-inventory"
+      ],
+      "score": 51,
+      "score_inputs": [
+        "HIGH",
+        "MEDIUM",
+        "LOW",
+        "INFO",
+        "HIGH"
+      ],
+      "verdict": "Incomplete assessment — findings need attention; additional issues may be undetected.",
+      "visible_rows": 6
+    },
+    "one-failed": {
+      "banner": false,
+      "complete": false,
+      "coverage": {
+        "active": false,
+        "id": "fixture-run",
+        "outcomes": [
+          {
+            "name": "Unused software",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Open network ports",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Risky services",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Quick security checks",
+            "outcome": "failed",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Hardware temperatures",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "CVE vulnerabilities",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Available updates",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          }
+        ]
+      },
+      "findings": {
+        "checks": [
+          {
+            "detail": "Synthetic hardening evidence.",
+            "ftype": "HARDENING",
+            "name": "fixture-hardening",
+            "risk": "🟢 ● LOW",
+            "tag": "HARDEN"
+          }
+        ],
+        "cve": [
+          {
+            "detail": "Synthetic CVE observation; applicability is not asserted.",
+            "ftype": "CVE",
+            "name": "fixture-cve",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "CVE"
+          },
+          {
+            "detail": "Synthetic available update; excluded from risk score.",
+            "ftype": "OUTDATED",
+            "name": "fixture-update",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "UPDATE"
+          }
+        ],
+        "info": [],
+        "scan": [
+          {
+            "detail": "Synthetic package observation; not a live host finding.",
+            "ftype": "SERVICE",
+            "name": "fixture-service <demo>",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "SERVICE"
+          },
+          {
+            "detail": "Synthetic listener observation.",
+            "ftype": "NETWORK",
+            "name": "fixture:631",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "NETWORK"
+          },
+          {
+            "detail": "Synthetic inventory entry.",
+            "ftype": "LEFTOVER",
+            "name": "fixture-inventory",
+            "risk": "🔵 ℹ INFO",
+            "tag": "LEFTOVER"
+          }
+        ]
+      },
+      "initial_mode": "expert",
+      "mode": "expert",
+      "reports": {
+        "executive": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        },
+        "technical": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        }
+      },
+      "row_order": [
+        "fixture-service <demo>",
+        "fixture-cve",
+        "fixture:631",
+        "fixture-update",
+        "fixture-hardening",
+        "fixture-inventory"
+      ],
+      "score": 51,
+      "score_inputs": [
+        "HIGH",
+        "MEDIUM",
+        "LOW",
+        "INFO",
+        "HIGH"
+      ],
+      "verdict": "Incomplete assessment — findings need attention; additional issues may be undetected.",
+      "visible_rows": 6
+    },
+    "one-partial": {
+      "banner": false,
+      "complete": false,
+      "coverage": {
+        "active": false,
+        "id": "fixture-run",
+        "outcomes": [
+          {
+            "name": "Unused software",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Open network ports",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Risky services",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Quick security checks",
+            "outcome": "partial",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Hardware temperatures",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "CVE vulnerabilities",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Available updates",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          }
+        ]
+      },
+      "findings": {
+        "checks": [
+          {
+            "detail": "Synthetic hardening evidence.",
+            "ftype": "HARDENING",
+            "name": "fixture-hardening",
+            "risk": "🟢 ● LOW",
+            "tag": "HARDEN"
+          }
+        ],
+        "cve": [
+          {
+            "detail": "Synthetic CVE observation; applicability is not asserted.",
+            "ftype": "CVE",
+            "name": "fixture-cve",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "CVE"
+          },
+          {
+            "detail": "Synthetic available update; excluded from risk score.",
+            "ftype": "OUTDATED",
+            "name": "fixture-update",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "UPDATE"
+          }
+        ],
+        "info": [],
+        "scan": [
+          {
+            "detail": "Synthetic package observation; not a live host finding.",
+            "ftype": "SERVICE",
+            "name": "fixture-service <demo>",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "SERVICE"
+          },
+          {
+            "detail": "Synthetic listener observation.",
+            "ftype": "NETWORK",
+            "name": "fixture:631",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "NETWORK"
+          },
+          {
+            "detail": "Synthetic inventory entry.",
+            "ftype": "LEFTOVER",
+            "name": "fixture-inventory",
+            "risk": "🔵 ℹ INFO",
+            "tag": "LEFTOVER"
+          }
+        ]
+      },
+      "initial_mode": "expert",
+      "mode": "expert",
+      "reports": {
+        "executive": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        },
+        "technical": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        }
+      },
+      "row_order": [
+        "fixture-service <demo>",
+        "fixture-cve",
+        "fixture:631",
+        "fixture-update",
+        "fixture-hardening",
+        "fixture-inventory"
+      ],
+      "score": 51,
+      "score_inputs": [
+        "HIGH",
+        "MEDIUM",
+        "LOW",
+        "INFO",
+        "HIGH"
+      ],
+      "verdict": "Incomplete assessment — findings need attention; additional issues may be undetected.",
+      "visible_rows": 6
+    },
+    "one-skipped": {
+      "banner": false,
+      "complete": false,
+      "coverage": {
+        "active": false,
+        "id": "fixture-run",
+        "outcomes": [
+          {
+            "name": "Unused software",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Open network ports",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Risky services",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Quick security checks",
+            "outcome": "skipped",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Hardware temperatures",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "CVE vulnerabilities",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Available updates",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          }
+        ]
+      },
+      "findings": {
+        "checks": [
+          {
+            "detail": "Synthetic hardening evidence.",
+            "ftype": "HARDENING",
+            "name": "fixture-hardening",
+            "risk": "🟢 ● LOW",
+            "tag": "HARDEN"
+          }
+        ],
+        "cve": [
+          {
+            "detail": "Synthetic CVE observation; applicability is not asserted.",
+            "ftype": "CVE",
+            "name": "fixture-cve",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "CVE"
+          },
+          {
+            "detail": "Synthetic available update; excluded from risk score.",
+            "ftype": "OUTDATED",
+            "name": "fixture-update",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "UPDATE"
+          }
+        ],
+        "info": [],
+        "scan": [
+          {
+            "detail": "Synthetic package observation; not a live host finding.",
+            "ftype": "SERVICE",
+            "name": "fixture-service <demo>",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "SERVICE"
+          },
+          {
+            "detail": "Synthetic listener observation.",
+            "ftype": "NETWORK",
+            "name": "fixture:631",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "NETWORK"
+          },
+          {
+            "detail": "Synthetic inventory entry.",
+            "ftype": "LEFTOVER",
+            "name": "fixture-inventory",
+            "risk": "🔵 ℹ INFO",
+            "tag": "LEFTOVER"
+          }
+        ]
+      },
+      "initial_mode": "expert",
+      "mode": "expert",
+      "reports": {
+        "executive": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        },
+        "technical": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        }
+      },
+      "row_order": [
+        "fixture-service <demo>",
+        "fixture-cve",
+        "fixture:631",
+        "fixture-update",
+        "fixture-hardening",
+        "fixture-inventory"
+      ],
+      "score": 51,
+      "score_inputs": [
+        "HIGH",
+        "MEDIUM",
+        "LOW",
+        "INFO",
+        "HIGH"
+      ],
+      "verdict": "Incomplete assessment — findings need attention; additional issues may be undetected.",
+      "visible_rows": 6
+    },
+    "one-unknown": {
+      "banner": false,
+      "complete": false,
+      "coverage": {
+        "active": false,
+        "id": "fixture-run",
+        "outcomes": [
+          {
+            "name": "Unused software",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Open network ports",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Risky services",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Quick security checks",
+            "outcome": "unknown",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Hardware temperatures",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "CVE vulnerabilities",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Available updates",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          }
+        ]
+      },
+      "findings": {
+        "checks": [
+          {
+            "detail": "Synthetic hardening evidence.",
+            "ftype": "HARDENING",
+            "name": "fixture-hardening",
+            "risk": "🟢 ● LOW",
+            "tag": "HARDEN"
+          }
+        ],
+        "cve": [
+          {
+            "detail": "Synthetic CVE observation; applicability is not asserted.",
+            "ftype": "CVE",
+            "name": "fixture-cve",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "CVE"
+          },
+          {
+            "detail": "Synthetic available update; excluded from risk score.",
+            "ftype": "OUTDATED",
+            "name": "fixture-update",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "UPDATE"
+          }
+        ],
+        "info": [],
+        "scan": [
+          {
+            "detail": "Synthetic package observation; not a live host finding.",
+            "ftype": "SERVICE",
+            "name": "fixture-service <demo>",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "SERVICE"
+          },
+          {
+            "detail": "Synthetic listener observation.",
+            "ftype": "NETWORK",
+            "name": "fixture:631",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "NETWORK"
+          },
+          {
+            "detail": "Synthetic inventory entry.",
+            "ftype": "LEFTOVER",
+            "name": "fixture-inventory",
+            "risk": "🔵 ℹ INFO",
+            "tag": "LEFTOVER"
+          }
+        ]
+      },
+      "initial_mode": "expert",
+      "mode": "expert",
+      "reports": {
+        "executive": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        },
+        "technical": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        }
+      },
+      "row_order": [
+        "fixture-service <demo>",
+        "fixture-cve",
+        "fixture:631",
+        "fixture-update",
+        "fixture-hardening",
+        "fixture-inventory"
+      ],
+      "score": 51,
+      "score_inputs": [
+        "HIGH",
+        "MEDIUM",
+        "LOW",
+        "INFO",
+        "HIGH"
+      ],
+      "verdict": "Incomplete assessment — findings need attention; additional issues may be undetected.",
+      "visible_rows": 6
+    },
+    "simple-complete": {
+      "banner": false,
+      "complete": true,
+      "coverage": {
+        "active": false,
+        "id": "fixture-run",
+        "outcomes": [
+          {
+            "name": "Unused software",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Open network ports",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Risky services",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Quick security checks",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Hardware temperatures",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "CVE vulnerabilities",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Available updates",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          }
+        ]
+      },
+      "findings": {
+        "checks": [],
+        "cve": [
+          {
+            "detail": "Synthetic CVE observation; applicability is not asserted.",
+            "ftype": "CVE",
+            "name": "fixture-cve",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "CVE"
+          },
+          {
+            "detail": "Synthetic available update; excluded from risk score.",
+            "ftype": "OUTDATED",
+            "name": "fixture-update",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "UPDATE"
+          }
+        ],
+        "info": [],
+        "scan": [
+          {
+            "detail": "Synthetic package observation; not a live host finding.",
+            "ftype": "SERVICE",
+            "name": "fixture-service <demo>",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "SERVICE"
+          },
+          {
+            "detail": "Synthetic listener observation.",
+            "ftype": "NETWORK",
+            "name": "fixture:631",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "NETWORK"
+          }
+        ]
+      },
+      "initial_mode": "simple",
+      "mode": "simple",
+      "reports": {
+        "executive": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        },
+        "technical": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        }
+      },
+      "row_order": [
+        "fixture-service <demo>",
+        "fixture-cve",
+        "fixture:631",
+        "fixture-update"
+      ],
+      "score": 48,
+      "score_inputs": [
+        "HIGH",
+        "MEDIUM",
+        "HIGH"
+      ],
+      "verdict": "Complete assessment — findings need attention.",
+      "visible_rows": 4
+    },
+    "simple-then-expert": {
+      "banner": false,
+      "complete": true,
+      "coverage": {
+        "active": false,
+        "id": "fixture-run",
+        "outcomes": [
+          {
+            "name": "Unused software",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Open network ports",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Risky services",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Quick security checks",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Hardware temperatures",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "CVE vulnerabilities",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          },
+          {
+            "name": "Available updates",
+            "outcome": "succeeded",
+            "reason": "Synthetic evidence"
+          }
+        ]
+      },
+      "findings": {
+        "checks": [],
+        "cve": [
+          {
+            "detail": "Synthetic CVE observation; applicability is not asserted.",
+            "ftype": "CVE",
+            "name": "fixture-cve",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "CVE"
+          },
+          {
+            "detail": "Synthetic available update; excluded from risk score.",
+            "ftype": "OUTDATED",
+            "name": "fixture-update",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "UPDATE"
+          }
+        ],
+        "info": [],
+        "scan": [
+          {
+            "detail": "Synthetic package observation; not a live host finding.",
+            "ftype": "SERVICE",
+            "name": "fixture-service <demo>",
+            "risk": "🔴 ✖ HIGH",
+            "tag": "SERVICE"
+          },
+          {
+            "detail": "Synthetic listener observation.",
+            "ftype": "NETWORK",
+            "name": "fixture:631",
+            "risk": "🟡 ▲ MEDIUM",
+            "tag": "NETWORK"
+          }
+        ]
+      },
+      "initial_mode": "simple",
+      "mode": "expert",
+      "reports": {
+        "executive": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        },
+        "technical": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        }
+      },
+      "row_order": [
+        "fixture-service <demo>",
+        "fixture-cve",
+        "fixture:631",
+        "fixture-update"
+      ],
+      "score": 48,
+      "score_inputs": [
+        "HIGH",
+        "MEDIUM",
+        "HIGH"
+      ],
+      "verdict": "Complete assessment — findings need attention.",
+      "visible_rows": 4
+    },
+    "unknown-coverage": {
+      "banner": false,
+      "complete": false,
+      "coverage": null,
+      "findings": {
+        "checks": [],
+        "cve": [],
+        "info": [],
+        "scan": []
+      },
+      "initial_mode": "expert",
+      "mode": "expert",
+      "reports": {
+        "executive": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        },
+        "technical": {
+          "exception": "NameError",
+          "message": "name '_render_finding_rows' is not defined",
+          "status": "failed"
+        }
+      },
+      "row_order": [],
+      "score": 0,
+      "score_inputs": [],
+      "verdict": "Assessment failed or coverage is unknown. No findings detected does not establish that the system is safe.",
+      "visible_rows": 0
+    }
+  },
+  "sequences": {
+    "seven-step": {
+      "active": false,
+      "dispatched": [
+        [
+          "deborphan"
+        ],
+        [
+          "ss",
+          "-tunlp"
+        ],
+        [
+          [
+            "example",
+            "1"
+          ]
+        ],
+        [
+          "apt",
+          "list",
+          "--upgradable"
+        ]
+      ],
+      "finalized": true,
+      "outcomes": [
+        {
+          "findings": 0,
+          "name": "Unused software",
+          "outcome": "succeeded",
+          "reason": "Command output recognized."
+        },
+        {
+          "findings": 0,
+          "name": "Open network ports",
+          "outcome": "succeeded",
+          "reason": "Command output recognized."
+        },
+        {
+          "findings": 0,
+          "name": "Risky services",
+          "outcome": "succeeded",
+          "reason": "7/7 package checks verified."
+        },
+        {
+          "findings": 0,
+          "name": "Quick security checks",
+          "outcome": "succeeded",
+          "reason": ""
+        },
+        {
+          "findings": 0,
+          "name": "Hardware temperatures",
+          "outcome": "succeeded",
+          "reason": ""
+        },
+        {
+          "findings": 0,
+          "name": "CVE vulnerabilities",
+          "outcome": "succeeded",
+          "reason": "1/1 responses usable; 0 package probes unknown; 0 responses limited."
+        },
+        {
+          "findings": 0,
+          "name": "Available updates",
+          "outcome": "succeeded",
+          "reason": "Package list output verified."
+        }
+      ],
+      "summary_calls": 1
+    },
+    "three-step": {
+      "active": false,
+      "dispatched": [
+        [
+          "deborphan"
+        ],
+        [
+          "ss",
+          "-tunlp"
+        ]
+      ],
+      "finalized": true,
+      "outcomes": [
+        {
+          "findings": 0,
+          "name": "Unused software",
+          "outcome": "succeeded",
+          "reason": "Command output recognized."
+        },
+        {
+          "findings": 0,
+          "name": "Open network ports",
+          "outcome": "succeeded",
+          "reason": "Command output recognized."
+        },
+        {
+          "findings": 0,
+          "name": "Risky services",
+          "outcome": "succeeded",
+          "reason": "7/7 package checks verified."
+        }
+      ],
+      "summary_calls": 0
+    }
+  }
+}

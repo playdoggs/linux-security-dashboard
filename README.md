@@ -51,7 +51,7 @@ This tool assumes you don't — and that's fine.
   or state; persistence errors are reported rather than offering memory-only undo.
 - **HTML Report** — everyday language (Executive) or full technical deep-dive; filename auto-tagged with hostname
 - **Auto-detects** what kind of machine you're running (Gaming Rig, Home Server, Docker Host, etc.) and adjusts what's flagged as normal vs suspicious
-- **Multiple themes** — Dark, Hacker, Solarized, Light, Pink
+- **Appearance** — Enterprise Workspace (default light), Hybrid Professional (dark navigation, light content), plus retained Dark, Hacker, Solarized, Light and Pink palettes. Lock Theme preserves the selected appearance at startup; unlocked startup uses Enterprise Workspace. Shared components include keyboard focus indicators, readable tables and font scaling.
 - **Multiple languages** — 12 built in (English, German, French, Spanish, Italian, Portuguese, Dutch, Japanese, Chinese Simplified, Arabic with RTL, and more)
 
 ---
@@ -120,7 +120,7 @@ GNOME/Ubuntu sessions with the affected schema, it selects Qt's generic platform
 theme for this process only. Explicit non-GTK theme selections and other desktops
 are preserved; an unavailable/unrecognized schema probe leaves selection unchanged.
 
-The app's Fusion style, five colour themes and navigation remain available.
+The app's Fusion style, seven colour themes and navigation remain available.
 GTK-provided native dialogs, icons or font integration may differ. No packages,
 GNOME schemas or persistent user settings are changed. A manual process-local
 `QT_QPA_PLATFORMTHEME=generic python3 linux-security-dashboard.py` remains available

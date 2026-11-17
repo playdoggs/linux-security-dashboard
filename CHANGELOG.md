@@ -5,6 +5,17 @@ All notable changes to Linux Security Dashboard are documented here.
 ## [Unreleased] — v4.2.1
 
 ### Changed
+- UI redesign Stage 2: add Enterprise Workspace (default) and Hybrid Professional,
+  retaining all five legacy palettes and locked appearance preferences. Share
+  semantic colours, typography, sizing and focus styles across existing widgets;
+  refresh existing component/console colours on theme changes. Widen severity and
+  action columns, increase row/control heights and wrap the existing toolbar at
+  smaller widths or larger fonts. Professional themes hide the decorative face;
+  legacy themes retain it. Navigation, result semantics and reports are unchanged.
+- UI-BL-001: restore full HTML report generation with the missing five-column
+  finding-row renderer. Escape every cell and use fixed severity colours without
+  changing findings selection, scores, coverage wording or report structure.
+  Add real-generator regression coverage and separate corrected baseline captures.
 - Ubuntu/GNOME startup: bypass the GTK3/GDK legacy `antialiasing` schema crash
   with a process-local generic Qt platform theme before QApplication construction.
   Scope the fallback to the affected schema/session and preserve explicit non-GTK

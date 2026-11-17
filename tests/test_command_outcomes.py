@@ -27,7 +27,7 @@ for node in TREE.body:
     name = node.name if isinstance(node, (ast.FunctionDef, ast.ClassDef)) else None
     if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
         name = node.targets[0].id
-    if name in {"UNDO_SERVICE_TARGETS", "UNDO_PACKAGE_RE", "build_undo_argv",
+    if name in {"UI_TYPOGRAPHY", "ThemeColor", "theme_value", "set_theme_style", "UNDO_SERVICE_TARGETS", "UNDO_PACKAGE_RE", "build_undo_argv",
                 "make_undo_operation", "undo_presentation", "ASSESSMENT_STEPS", "COVERAGE_STATES",
                 "coverage_result", "assessment_complete", "assessment_verdict", "assessment_details", "probe_package", "ScanOwnership", "scan_owner", "scan_join", "scan_operation", "bind_scan_worker", "scan_slot"}:
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(SOURCE), "exec"), NS)

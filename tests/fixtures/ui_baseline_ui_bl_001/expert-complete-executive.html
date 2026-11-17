@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Linux Audit Report — fixture-hostname</title>
+<style>
+body{font-family:monospace;background:#0d1117;color:#e6edf3;padding:24px;max-width:1100px;margin:0 auto;}
+h1{color:#00d9ff;}
+h2{color:#00d9ff;border-bottom:1px solid #30363d;padding-bottom:6px;margin-top:32px;}
+h3{color:#e6edf3;margin-top:18px;}
+.score{font-size:2.5em;font-weight:bold;color:#ff4444;}
+table{border-collapse:collapse;width:100%;margin-top:12px;}
+th{background:#21262d;color:#8b949e;padding:8px;text-align:left;font-size:11px;letter-spacing:1px;}
+td{padding:8px;border-bottom:1px solid #30363d;font-size:12px;vertical-align:top;}
+tr:hover{background:#161b22;}
+.meta{color:#8b949e;font-size:12px;margin-bottom:20px;}
+.exec-box{background:#1a2a1a;border:1px solid #3fb950;border-radius:8px;padding:16px;margin:16px 0;}
+.exec-box h2{color:#3fb950;margin:0 0 8px 0;border:none;padding:0;}
+.stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:16px 0;}
+.stat{background:#21262d;border-radius:6px;padding:12px;text-align:center;}
+.stat .num{font-size:28px;font-weight:bold;}
+.stat .lbl{color:#8b949e;margin-top:4px;}
+.section-sub{color:#8b949e;font-style:italic;margin:0 0 6px 0;}
+footer{color:#8b949e;font-size:11px;text-align:center;margin-top:40px;border-top:1px solid #30363d;padding-top:16px;}
+</style>
+</head><body>
+<h1>⬡ Linux Security Audit Report</h1>
+<div class="meta">
+Host: <b>fixture-hostname</b> |
+Profile: 🔀 Mixed Use |
+Generated: 2026-01-01 12:00:00 |
+Mode: Executive
+</div>
+
+<h2>Overall Assessment</h2>
+<div class="exec-box">
+  <h2>In Everyday Language</h2>
+  <p><b>Complete assessment — findings need attention.</b></p><p>Unused software: Succeeded — Synthetic evidence<br>Open network ports: Succeeded — Synthetic evidence<br>Risky services: Succeeded — Synthetic evidence<br>Quick security checks: Succeeded — Synthetic evidence<br>Hardware temperatures: Succeeded — Synthetic evidence<br>CVE vulnerabilities: Succeeded — Synthetic evidence<br>Available updates: Succeeded — Synthetic evidence</p><p>Scope: seven selected checks at scan time; rerun after changes. Not a complete security audit or certification.</p><p>Detected findings: 2 high, 1 medium, 1 low. Remediation actions recorded this session: 0.</p>
+</div>
+<div style="margin:8px 0;">
+  <span style="color:#8b949e;">Risk score:</span>
+  <span class="score">51 / 100</span>
+  <span style="color:#8b949e;margin-left:8px;">Detected findings severity; not assessment coverage</span>
+</div>
+<div class="stat-grid">
+  <div class="stat"><div class="num" style="color:#ff4444;">2</div><div class="lbl">High priority</div></div>
+  <div class="stat"><div class="num" style="color:#f0a500;">1</div><div class="lbl">Medium priority</div></div>
+  <div class="stat"><div class="num" style="color:#3fb950;">1</div><div class="lbl">Low priority</div></div>
+</div>
+
+<h2>System Information</h2>
+<table><tr><td style='color:#8b949e;width:160px;'>Hostname</td><td>fixture-hostname</td></tr><tr><td style='color:#8b949e;width:160px;'>Operating System</td><td>fixture-os</td></tr><tr><td style='color:#8b949e;width:160px;'>Kernel</td><td>fixture-kernel</td></tr><tr><td style='color:#8b949e;width:160px;'>Architecture</td><td>fixture-arch</td></tr><tr><td style='color:#8b949e;width:160px;'>CPU</td><td>fixture-cpu</td></tr><tr><td style='color:#8b949e;width:160px;'>Memory</td><td>fixture-ram</td></tr><tr><td style='color:#8b949e;width:160px;'>Uptime</td><td>fixture-uptime</td></tr><tr><td style='color:#8b949e;width:160px;'>Package manager</td><td>apt</td></tr><tr><td style='color:#8b949e;width:160px;'>System profile</td><td>🔀 Mixed Use</td></tr></table>
+
+<h2>Scan Your System (3)</h2>
+<p class="section-sub">Findings from package, network-port and service scans.</p>
+<table>
+<tr><th>NAME</th><th>TYPE</th><th>RISK</th><th>TAG</th><th>DETAIL</th></tr>
+<tr><td>fixture-service &lt;demo&gt;</td><td>SERVICE</td><td style='color:#ff4444;'>🔴 ✖ HIGH</td><td>SERVICE</td><td>Synthetic package observation; not a live host finding.</td></tr><tr><td>fixture:631</td><td>NETWORK</td><td style='color:#f0a500;'>🟡 ▲ MEDIUM</td><td>NETWORK</td><td>Synthetic listener observation.</td></tr><tr><td>fixture-inventory</td><td>LEFTOVER</td><td style='color:#00d9ff;'>🔵 ℹ INFO</td><td>LEFTOVER</td><td>Synthetic inventory entry.</td></tr>
+</table>
+
+<h2>Security Checks (1)</h2>
+<p class="section-sub">OS hardening findings — Lynis audit and quick security checks.</p>
+<table>
+<tr><th>NAME</th><th>TYPE</th><th>RISK</th><th>TAG</th><th>DETAIL</th></tr>
+<tr><td>fixture-hardening</td><td>HARDENING</td><td style='color:#3fb950;'>🟢 ● LOW</td><td>HARDEN</td><td>Synthetic hardening evidence.</td></tr>
+</table>
+
+<h2>CVE Vulnerability Check (2)</h2>
+<p class="section-sub">Known vulnerabilities in installed software and available updates.</p>
+<table>
+<tr><th>NAME</th><th>TYPE</th><th>RISK</th><th>TAG</th><th>DETAIL</th></tr>
+<tr><td>fixture-cve</td><td>CVE</td><td style='color:#ff4444;'>🔴 ✖ HIGH</td><td>CVE</td><td>Synthetic CVE observation; applicability is not asserted.</td></tr><tr><td>fixture-update</td><td>OUTDATED</td><td style='color:#f0a500;'>🟡 ▲ MEDIUM</td><td>UPDATE</td><td>Synthetic available update; excluded from risk score.</td></tr>
+</table>
+
+<h2>Recommended Tools (0 installed / 1 missing)</h2>
+<p class="section-sub">Extra security and monitoring tools the app can manage.</p>
+<h3>Installed</h3>
+<table>
+<tr><th>NAME</th><th>CATEGORY</th><th>STATUS</th><th>WHAT IT DOES</th></tr>
+<tr><td colspan=4 style='color:#8b949e;'>None of the recommended tools are installed yet.</td></tr>
+</table>
+<h3>Missing — worth considering</h3>
+<table>
+<tr><th>NAME</th><th>CATEGORY</th><th>STATUS</th><th>WHAT IT DOES</th></tr>
+<tr><td>fixture-tool</td><td>Fixture</td><td style='color:#8b949e;'>Not installed</td><td>Synthetic tool status</td></tr>
+</table>
+
+<h2>Undo / Rollback Log (0)</h2>
+<p class="section-sub">Actions taken this session — each one has a rollback command.</p>
+<table>
+<tr><th>TIME</th><th>ACTION</th><th>COMMAND</th><th>RISK LEVEL</th><th>UNDO COMMAND</th></tr>
+<tr><td colspan=5 style='color:#8b949e;'>No actions taken this session.</td></tr>
+</table>
+
+<footer>Linux Security Dashboard v4.2 | Built by playdoggy 2026 | github.com/playdoggs/linux-security-dashboard</footer>
+</body></html>

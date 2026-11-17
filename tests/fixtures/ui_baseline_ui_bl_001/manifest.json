@@ -1,0 +1,6 @@
+{
+  "fixture_timestamp": "2026-01-01T12:00:00",
+  "note": "Synthetic fixture data. Full-report exceptions are product failures, not successful HTML captures.",
+  "python": "3.14.4",
+  "source_sha256": "ea92764aa860085bebe2fc45739fcc1f8b9764d5505f844885f5a479ce7ca932"
+}

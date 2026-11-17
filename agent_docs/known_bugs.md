@@ -3,6 +3,12 @@
 Audit date: **2026-04-23**
 
 ## Open
+### Separate UI redesign corrective backlog
+- UI-BL-002 (CVE provider contract) and UI-BL-003 (client/service classification)
+  remain separate prior-live-audit backlog items. Neither was changed by UI-BL-001.
+- UI-BL-001 is resolved below; see the [behaviour baseline](ui_behaviour_baseline.md)
+  for preserved pre-fix captures and the corrected report baseline.
+
 ### Streaming environmental and cleanup limits (Increment 4 Stage 4B)
 - Execution uses one monotonic deadline across concurrent stdout/stderr/input
   handling and process wait. Deadline starts before `Popen`; OS process creation
@@ -35,6 +41,17 @@ Audit date: **2026-04-23**
   and offline CVE checks never establish successful assessment coverage.
 
 ## Regression guards (previously fixed — don't regress)
+
+### Full HTML report renderer (UI-BL-001)
+- The missing `_render_finding_rows` helper previously raised NameError in both
+  report modes. A five-column renderer now escapes all cell values and selects
+  severity colours from a closed palette. It does not select/filter findings.
+- Real-generator tests cover Simple/Expert, incomplete coverage, special characters,
+  filtering and mode switching. The older coverage test no longer mocks rendering.
+- Keep original Stage 1 evidence under `tests/fixtures/ui_baseline`; corrected
+  captures under `tests/fixtures/ui_baseline_ui_bl_001` retain identical semantics
+  and coverage fragments. No scoring, worker, privilege or undo behaviour changed.
+
 
 ### Quick-check parsing
 - SSH explicit values must be unambiguous; a matching secure line cannot override
