@@ -1,0 +1,14 @@
+{
+  "checks": [
+    "startup detection, five table states, unchecked defaults, candidate gate and deduplication passed",
+    "preview/credential cancellation never dispatches installation",
+    "failed/stale transactions remain unavailable and require another review",
+    "active package worker retained during shutdown; cancel-close and post-install validation passed",
+    "stale progress/results, duplicate completion and pre-dispatch rollback passed",
+    "targeted pre-scan revalidation skips without starting a scan or sudo"
+  ],
+  "screenshots": [
+    "screenshots/increment4h/20261117-141622-enterprise-prerequisites-1343e948.png",
+    "screenshots/increment4h/20261117-141623-hybrid-prerequisites-3d149acf.png"
+  ]
+}

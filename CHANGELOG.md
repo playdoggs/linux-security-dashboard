@@ -5,6 +5,13 @@ All notable changes to Linux Security Dashboard are documented here.
 ## [Unreleased] — v4.2.1
 
 ### Changed
+- Increment 4H: add Settings → Prerequisites with read-only startup discovery,
+  targeted pre-scan gates, five explicit availability states, unchecked selection,
+  individual/batch installation and candidate/release allowlists. Preview pinned
+  package/dependency plans before elevation, reject unrelated changes, revalidate
+  before dispatch and verify packages/executables afterward. The dedicated APT
+  executor never force-terminates an active transaction. Remove Lynis/SMART inline
+  installers and automatic audit handoffs; preserve independent scan authorization.
 - Increment 4G: prioritize Name, Risk and Actions in the findings table's visual
   order, with viewport-based widths and escaped full-text tooltips. Logical column
   indices, sorting, filtering, explanation content and action handlers are retained.

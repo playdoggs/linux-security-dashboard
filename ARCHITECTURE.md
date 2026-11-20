@@ -62,6 +62,21 @@ content, bounded by 760×640 logical pixels and the available screen (with margi
 The Close control remains outside the scroll area. No execution, authorization or
 persistence code participates in either sizing mechanism.
 
+## Prerequisite management (Increment 4H)
+
+`PREREQUISITES`/`prerequisite_rows()` define execution dependencies and supported
+backends. `PrerequisitesPanel` owns bounded background discovery/preview jobs, the
+Settings table and an explicitly approved installation/verification chain. Targeted
+`prerequisite_gate()` checks precede affected scan entry points and step adapters.
+It does not turn tool presence into successful coverage or install assessment subjects.
+
+`build_prerequisite_plan()` strictly parses new-package simulations and pins their
+resolved versions; `execute_prerequisite_plan()` revalidates before sudo and uses
+no automatic termination/deadline for active APT. Existing WorkerMixin/ScanOwnership
+and an explicit continuation lease protect native completion and nested confirmation
+loops. The dashboard also counts read-only prerequisite workers when closing.
+See [canonical workflow, limits and legacy-path caveats](agent_docs/prerequisites.md).
+
 ## Component table (file → role)
 
 The application is a single-file PyQt6 GUI. All components live in [linux-security-dashboard.py](linux-security-dashboard.py); line numbers below pin each component.

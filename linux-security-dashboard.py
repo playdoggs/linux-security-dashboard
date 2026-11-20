@@ -349,6 +349,8 @@ def foundation_geometry(widget):
         for row in range(widget.rowCount()): widget.setRowHeight(row,height)
         if hasattr(widget,"fit_columns"):
             widget.fit_columns()
+        elif widget.objectName() == 'prerequisites_table':
+            widget.setColumnWidth(6, max(112, widget.fontMetrics().horizontalAdvance('Install') + 48))
         elif widget.columnCount()==6:
             widget.setColumnWidth(2,max(UI_METRICS["risk_width"],widget.fontMetrics().horizontalAdvance("🟡 ▲ MEDIUM")+32))
             widget.setColumnWidth(5,max(UI_METRICS["actions_width"],4*(widget.fontMetrics().horizontalAdvance("DISABLE")+24)))
@@ -451,6 +453,325 @@ class FoundationEvents(QObject):
         if event.type()==QEvent.Type.Show: foundation_geometry(widget)
         if event.type()==QEvent.Type.Resize and getattr(widget,"objectName",lambda:"")()=="toolbar_bar":foundation_toolbar(widget)
         return False
+
+
+# ── Scan prerequisites: read-only discovery and strict Ubuntu install plans ────
+PREREQUISITES = (
+    ('unused', 'Unused software', 'deborphan', 'deborphan', 'Required for check'),
+    ('network', 'Open network ports', 'ss', 'iproute2', 'Required for check'),
+    ('services', 'Risky-service package checks', 'dpkg-query', 'dpkg', 'Required on Ubuntu'),
+    ('quick', 'Quick checks — SSH directives', 'grep', 'grep', 'Required for these probes'),
+    ('quick', 'Quick checks — service state', 'systemctl', 'systemd', 'Required for these probes'),
+    ('quick', 'Quick checks — package state', 'dpkg', 'dpkg', 'Required for this probe'),
+    ('quick', 'Quick checks — file permissions', 'ls', 'coreutils', 'Required for this probe'),
+    ('quick', 'Quick checks — kernel settings', 'sysctl', 'procps', 'Required for these probes'),
+    ('temperature', 'Hardware temperatures', 'sensors', 'lm-sensors', 'Required for check'),
+    ('drives', 'SMART — drive discovery', 'lsblk', 'util-linux', 'Required for check'),
+    ('drives', 'SMART — health', 'smartctl', 'smartmontools', 'Required; separate scan approval'),
+    ('drives', 'SMART — authorization', 'sudo', 'sudo', 'Required; no elevation during detection'),
+    ('lynis', 'Lynis audit', 'lynis', 'lynis', 'Required; separate audit approval'),
+    ('lynis', 'Lynis — authorization', 'sudo', 'sudo', 'Required; no elevation during detection'),
+    ('cve', 'CVE package discovery', 'dpkg-query', 'dpkg', 'Required; Ubuntu provider'),
+    ('updates', 'Available updates', 'apt', 'apt', 'Required; Ubuntu backend'),
+    ('inventory', 'All package inventory', 'dpkg-query', 'dpkg', 'Required on Ubuntu'),
+    ('split_inventory', 'OS/user package inventories', 'apt-mark', 'apt', 'Required; apt backend'),
+    ('profile', 'Profile detection', 'ps', 'procps', 'Optional'),
+    ('endpoint', 'Endpoint identity', 'hostname', 'hostname', 'Optional'),
+    ('endpoint', 'Endpoint kernel/architecture', 'uname', 'coreutils', 'Optional'),
+    ('scheduler', 'Scheduled checks', 'crontab', 'cron', 'Optional; service readiness separate'),
+    ('privilege', 'Approved privileged actions', 'sudo', 'sudo', 'Required only for privilege'),
+)
+# OS repair, hardening subjects and the optional tool catalogue are not installers.
+PREREQUISITE_INSTALL_RELEASES = {release: frozenset(('deborphan', 'iproute2', 'lm-sensors', 'smartmontools', 'lynis', 'cron'))
+                               for release in ('22.04', '24.04', '26.04')}
+PREREQUISITE_EFFECTS = {
+    'smartmontools': 'Includes smartd monitoring; packaging may configure/start a service.',
+    'cron': 'Installs a scheduling daemon; packaging may enable/start it. No job will be created by this action.',
+    'lm-sensors': 'Installs sensor utilities. No sensors-detect, kernel-module or fan configuration will be run.',
+    'lynis': 'Installs audit tooling and package defaults; does not authorize an audit.',
+    'iproute2': 'Installs network utilities; no dashboard network configuration command will run.',
+    'deborphan': 'Installs package-analysis tooling; does not authorize package removal.',
+}
+
+
+def prerequisite_os():
+    data = {}
+    for line in Path('/etc/os-release').read_text().splitlines():
+        if '=' in line:
+            key, value = line.split('=', 1)
+            data[key] = value.strip('"')
+    return data.get('ID', ''), data.get('VERSION_ID', '')
+
+
+def prerequisite_read(argv, budget):
+    remaining = budget - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError('Prerequisite detection deadline expired')
+    result = subprocess.run(argv, capture_output=True, text=True,
+                            timeout=min(3, remaining), env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'},
+                            stdin=subprocess.DEVNULL)
+    if len(result.stdout) + len(result.stderr) > 2 * 1024 * 1024:
+        raise ValueError('Prerequisite metadata exceeds limit')
+    if result.returncode:
+        raise ValueError('Package metadata unavailable; check repositories/package state manually')
+    return result.stdout
+
+
+def prerequisite_candidate(package, budget):
+    text = prerequisite_read(['/usr/bin/apt-cache', 'policy', package], budget)
+    matches = re.findall(r'^\s*Candidate:\s*(\S+)\s*$', text, re.M)
+    if len(matches) != 1 or matches[0] == '(none)':
+        return None
+    if not re.fullmatch(r'[0-9A-Za-z.+:~\-]+', matches[0]):
+        raise ValueError('Unrecognized package version')
+    return matches[0]
+
+
+def prerequisite_rows(distro):
+    apt = distro in ('ubuntu', 'debian', 'linuxmint', 'mint', 'pop', 'zorin', 'elementary')
+    rpm = distro in ('fedora', 'rhel', 'centos', 'rocky', 'alma')
+    pacman = distro in ('arch', 'manjaro', 'endeavouros')
+    rows = []
+    for key, section, executable, package, requirement in PREREQUISITES:
+        if key in ('services', 'inventory'):
+            if rpm:
+                executable, package = 'rpm', 'rpm'
+            elif pacman:
+                executable, package = 'pacman', 'pacman'
+        supported = not ((key == 'cve' and distro != 'ubuntu') or
+                         (key in ('unused', 'updates', 'split_inventory') and not apt) or
+                         (key in ('services', 'inventory') and not (apt or rpm or pacman)) or
+                         (key == 'quick' and executable == 'dpkg' and not apt))
+        rows.append((key, section, executable, package, requirement, supported))
+    return rows
+
+
+def detect_prerequisites():
+    """Bounded local discovery only; never executes a scan, sudo or apt update."""
+    deadline = time.monotonic() + 12
+    rows = []
+    try:
+        distro, release = prerequisite_os()
+    except Exception:
+        distro, release = '', ''
+    candidates = {}
+    installer_ready = all(shutil.which(name) for name in ('sudo', 'apt-get', 'apt-cache', 'dpkg-query'))
+    for key, section, executable, package, requirement, supported in prerequisite_rows(distro):
+        row = dict(key=key, section=section, executable=executable, package=package,
+                   requirement=requirement, status='Could Not Verify', reason='', candidate=None, installable=False)
+        try:
+            if time.monotonic() >= deadline:
+                raise TimeoutError('Detection deadline expired; use Refresh')
+            if not distro:
+                raise ValueError('Distribution could not be identified')
+            if not supported:
+                row.update(status='Unsupported', reason='This scan/probe backend is not supported on this distribution; no package manager is installed automatically.')
+            elif shutil.which(executable):
+                row.update(status='Installed', reason='Executable present; scan evidence and service readiness are separate.')
+            else:
+                row.update(status='Missing', reason='Required executable not found.')
+                if distro == 'ubuntu' and package in PREREQUISITE_INSTALL_RELEASES.get(release, ()):
+                    if package not in candidates:
+                        candidates[package] = prerequisite_candidate(package, deadline)
+                    row['candidate'] = candidates[package]
+                    row['installable'] = bool(row['candidate']) and installer_ready
+                    row['reason'] += ' Verified local candidate: ' + row['candidate'] if row['candidate'] else ' No candidate in local APT metadata; no repository refresh was performed.'
+                    if not installer_ready:
+                        row['reason'] += ' Installer backend/sudo unavailable; manual repair is required.'
+                else:
+                    row['reason'] += ' Manual OS repair or unsupported installation release; no installer offered.'
+        except Exception as exc:
+            row.update(status='Could Not Verify', reason=str(exc), installable=False)
+        rows.append(row)
+    rows.append(dict(key='runtime', section='Findings / reports / SQLite history', executable='—', package='—',
+                     requirement='Existing Python/PyQt runtime', status='Not Required',
+                     reason='No additional scan package; runtime repair is outside this installer.', candidate=None, installable=False))
+    return rows
+
+
+def prerequisite_apt_state():
+    """Bounded streaming fingerprint of public APT state; never logs file contents."""
+    import hashlib
+    digest = hashlib.sha256()
+    total = 0
+    deadline = time.monotonic() + 5
+    paths = [Path('/var/lib/dpkg/status')]
+    for root in (Path('/etc/apt'), Path('/var/lib/apt/lists')):
+        if root.exists():
+            for path in root.rglob('*'):
+                if time.monotonic() >= deadline or len(paths) > 10000:
+                    raise ValueError('APT state enumeration limit exceeded')
+                if path.is_file() and 'partial' not in path.parts and path.name != 'lock':
+                    paths.append(path)
+    for path in sorted(paths):
+        if 'auth.conf' in path.name or 'auth.conf.d' in path.parts:
+            continue  # Never read repository credentials into the fingerprint.
+        st = path.stat()
+        if st.st_uid != 0 or st.st_mode & 0o022 or not stat.S_ISREG(st.st_mode):
+            raise ValueError('Unsafe APT state/configuration ownership or permissions')
+        total += st.st_size
+        if total > 512 * 1024 * 1024:
+            raise ValueError('APT metadata exceeds safe preview limit')
+        digest.update(str(path).encode() + b'\0')
+        source = bytearray()
+        with path.open('rb') as stream:
+            while True:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError('APT state fingerprint deadline exceeded')
+                chunk = stream.read(65536)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                if path.suffix in ('.list', '.sources'):
+                    source.extend(chunk)
+                    if len(source) > 1024 * 1024:
+                        raise ValueError('Repository source configuration exceeds limit')
+        if source and re.search(r'(trusted|allow-insecure|allow-weak|allow-downgrade-to-insecure)\s*(?:=|:)\s*(yes|true|1)',
+                                source.decode(errors='replace'), re.I):
+            raise ValueError('Repository trust bypass is configured; installation disabled')
+        after = path.stat()
+        if (st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns) != (after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+            raise ValueError('APT state changed while reading; review again')
+    return digest.hexdigest()
+
+
+APT_PREREQUISITE_OPTIONS = ('-o', 'APT::Get::AllowUnauthenticated=false',
+                            '-o', 'Acquire::AllowInsecureRepositories=false',
+                            '-o', 'Acquire::AllowDowngradeToInsecureRepositories=false',
+                            '-o', 'Acquire::AllowWeakRepositories=false',
+                            '-o', 'Acquire::https::Verify-Peer=true',
+                            '-o', 'Acquire::https::Verify-Host=true',
+                            '-o', 'DPkg::Lock::Timeout=0', '--no-remove', '--no-upgrade', '--no-install-recommends')
+
+
+def prerequisite_apt_argv(packages, simulate=False):
+    pins = []
+    for name, version in packages:
+        if not re.fullmatch(r'[a-z0-9][a-z0-9+.-]*(?::[a-z0-9]+)?', name) or name.endswith(('-', '+')):
+            raise ValueError('Invalid package name')
+        if not re.fullmatch(r'[0-9A-Za-z.+:~\-]+', version):
+            raise ValueError('Invalid package version')
+        pins.append(name + '=' + version)
+    if not pins or len(pins) > 256:
+        raise ValueError('Empty or excessive package plan')
+    return ['/usr/bin/apt-get', *APT_PREREQUISITE_OPTIONS, *(['--simulate'] if simulate else []),
+            'install', '-y', '--', *pins]
+
+
+def parse_prerequisite_simulation(text):
+    installs, configurations = [], []
+    for line in text.splitlines():
+        if line.startswith('Remv ') or line.startswith('Purg '):
+            raise ValueError('Package removal rejected')
+        if line.startswith('Inst '):
+            # [old-version] denotes an upgrade/reinstallation, never a missing dependency.
+            match = re.fullmatch(r'Inst ([a-z0-9][a-z0-9+.:\-]*) \(([^\s()]+) [^\n]*\)', line)
+            if not match or '[' in line.split('(', 1)[0]:
+                raise ValueError('Upgrades or unrecognized APT changes rejected')
+            installs.append((match[1], match[2]))
+        elif line.startswith('Conf '):
+            match = re.fullmatch(r'Conf ([a-z0-9][a-z0-9+.:\-]*) \(([^\s()]+) [^\n]*\)', line)
+            if not match:
+                raise ValueError('Unrecognized APT configuration plan')
+            configurations.append((match[1], match[2]))
+    if any(pair not in installs for pair in configurations):
+        raise ValueError('Unrelated package configuration rejected')
+    if not installs or len(installs) > 256 or len(set(n for n, v in installs)) != len(installs):
+        raise ValueError('Empty, duplicate or excessive APT plan')
+    prerequisite_apt_argv(installs)  # Strict argument validation independent of display text.
+    return tuple(sorted(installs))
+
+
+def build_prerequisite_plan(packages):
+    distro, release = prerequisite_os()
+    allowed = PREREQUISITE_INSTALL_RELEASES.get(release, ()) if distro == 'ubuntu' else ()
+    packages = tuple(sorted(set(packages)))
+    if not packages or any(type(p) is not str or p not in allowed for p in packages):
+        raise ValueError('Package not allowlisted for this Ubuntu release')
+    for executable in ('/usr/bin/apt-get', '/usr/bin/apt-cache', '/usr/bin/sudo', '/usr/bin/env'):
+        st = Path(executable).stat()
+        if st.st_uid != 0 or st.st_mode & 0o022 or not stat.S_ISREG(st.st_mode):
+            raise ValueError('Untrusted package-management executable')
+    deadline = time.monotonic() + 15
+    state = prerequisite_apt_state()
+    if prerequisite_read(['/usr/bin/dpkg', '--audit'], deadline).strip():
+        raise ValueError('Package database needs manual repair; no installation attempted')
+    requested = []
+    for package in packages:
+        version = prerequisite_candidate(package, deadline)
+        if version is None:
+            raise ValueError(f'{package}: no verified candidate in configured repositories')
+        requested.append((package, version))
+    text = prerequisite_read(prerequisite_apt_argv(requested, simulate=True), deadline)
+    resolved = parse_prerequisite_simulation(text)
+    if not set(requested).issubset(resolved):
+        raise ValueError('Requested packages are already installed or absent from the plan; refresh')
+    policy = prerequisite_read(['/usr/bin/apt-cache', 'policy', *[n for n, v in resolved]], deadline)
+    if prerequisite_apt_state() != state:
+        raise ValueError('APT state changed during preview; refresh and review again')
+    return dict(requested=tuple(requested), resolved=resolved, state=state, policy=policy,
+                command=tuple(prerequisite_apt_argv(resolved)))
+
+
+def verify_prerequisite_plan(plan):
+    rows = detect_prerequisites()
+    deadline = time.monotonic() + 8
+    packages = {}
+    for name, version in plan['resolved']:
+        try:
+            text = prerequisite_read(['/usr/bin/dpkg-query', '-W', '-f=${db:Status-Abbrev}\t${Version}\n', name], deadline)
+            fields = text.rstrip('\n').split('\t')
+            packages[name] = len(fields) == 2 and fields[0] == 'ii ' and fields[1] == version
+        except Exception:
+            packages[name] = False
+    if not all(packages.values()):
+        # A failed dependency/version check cannot enable the requested capability.
+        requested = {name for name, version in plan['requested']}
+        rows = [dict(row, status='Could Not Verify', reason='APT package/dependency verification incomplete; review Activity.',
+                     candidate=None, installable=False) if row['package'] in requested else row for row in rows]
+    return dict(rows=rows, packages=packages)
+
+
+def prerequisite_redact(text, password=None):
+    if password:
+        text = text.replace(password.decode(errors='replace'), '[redacted]')
+    return re.sub(r'://[^\s/@]+@', '://[redacted]@', text)
+
+
+def prerequisite_gate(terminal, key, on_terminal=None, on_failed=None, executable=None):
+    """Targeted synchronous stat checks only. Legacy isolated callers have no panel."""
+    panel = getattr(terminal, '_prerequisites', None)
+    if getattr(panel, '_is_prerequisite_panel', None) is not True:
+        return True
+    try:
+        distro, _ = prerequisite_os()
+        required = [r for r in prerequisite_rows(distro) if r[0] == key and (executable is None or r[2] == executable)]
+        if any(not r[5] for r in required):
+            raise ValueError('Unsupported scan/backend on this distribution')
+        missing = [r[2] for r in required if not shutil.which(r[2])]
+        if missing:
+            raise ValueError('Missing prerequisite: ' + ', '.join(missing))
+        return True
+    except Exception as exc:
+        reason = str(exc)
+        terminal.append_warn('Skipped — ' + reason + '. Open Settings → Prerequisites.')
+        panel.notice.setText('Skipped — ' + reason + '. Refresh prerequisites before retrying.')
+        if on_terminal:
+            on_terminal(coverage_result('skipped', reason))
+        elif on_failed:
+            on_failed()
+        return False
+
+
+
+def open_prerequisite_scheduler(parent):
+    terminal = getattr(parent, 'terminal', None)
+    if terminal is not None and not prerequisite_gate(terminal, 'scheduler'):
+        window = parent.window()
+        if hasattr(window, '_open_prerequisites'):
+            window._open_prerequisites()
+        return
+    ScheduleScanDialog(parent).exec()
 
 
 # ── Languages (12 supported) ──────────────────────────────────────────────────
@@ -2565,6 +2886,367 @@ class WorkerMixin:
         return any(w.isRunning() for w in self._workers)
 
 
+class PrerequisiteJob(QThread):
+    """A retained, finite read-only job, or an explicitly approved APT transaction."""
+    output_ready = pyqtSignal(str)
+    def __init__(self, function):
+        super().__init__()
+        self.function = function
+        self.value = None
+        self.error = None
+    def run(self):
+        try:
+            self.value = self.function()
+        except Exception as exc:
+            self.error = str(exc)
+        finally:
+            self.function = None  # Drop any credential-bearing closure.
+
+
+def execute_prerequisite_plan(approved, password, progress):
+    """No timeout, kill, terminate or cancellation of a package transaction."""
+    fresh = build_prerequisite_plan([n for n, v in approved['requested']])
+    if fresh != approved:
+        raise ValueError('Installation plan changed; refresh and approve a new preview')
+    if not isinstance(password, bytes) or not 0 < len(password) <= 4096:
+        raise ValueError('Explicit installation authentication required')
+    argv = ['/usr/bin/sudo', '-S', '-p', '', '/usr/bin/env', '-i',
+            'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'HOME=/root', 'LC_ALL=C',
+            'DEBIAN_FRONTEND=noninteractive', 'DEBIAN_PRIORITY=critical', *fresh['command']]
+    # Popen/owned draining replaces subprocess.run: run() kills its child on timeout
+    # or communication failure. That behaviour must never be used for apt/dpkg here.
+    retained, updates = bytearray(), 0
+    pending = memoryview(password + b'\n')
+    selector, error, exited_at = None, None, None
+    process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, bufsize=0,
+                               env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'})
+    try:
+        selector = selectors.DefaultSelector()
+        os.set_blocking(process.stdout.fileno(), False)
+        os.set_blocking(process.stdin.fileno(), False)
+        selector.register(process.stdout, selectors.EVENT_READ)
+        selector.register(process.stdin, selectors.EVENT_WRITE)
+        while selector.get_map():
+            if process.poll() is not None:
+                exited_at = exited_at or time.monotonic()
+                if time.monotonic() - exited_at > 1:
+                    break  # A service descendant may retain a pipe; never kill it.
+            for key, events in selector.select(.1):
+                if key.fileobj is process.stdin:
+                    try:
+                        count = os.write(process.stdin.fileno(), pending)
+                        pending = pending[count:]
+                    except BrokenPipeError:
+                        pending = pending[:0]
+                    if not pending:
+                        selector.unregister(process.stdin)
+                        process.stdin.close()
+                else:
+                    chunk = os.read(process.stdout.fileno(), 4096)
+                    if not chunk:
+                        selector.unregister(process.stdout)
+                    else:
+                        if len(retained) < 2 * 1024 * 1024:
+                            retained.extend(chunk[:2 * 1024 * 1024 - len(retained)])
+                        if updates < 1024:
+                            progress('APT transaction output received; configuration remains active. Detailed output is redacted after completion.')
+                            updates += 1
+        code = process.wait()  # Native worker stays owned; no GUI-thread wait.
+    except BaseException as exc:
+        error = str(exc)
+        # Never abandon or signal an active package manager. Drain/discard output
+        # until its direct parent exits, even after a logging/selector failure.
+        try:
+            process.stdin.close()
+        except Exception:
+            pass
+        while process.poll() is None:
+            try:
+                os.set_blocking(process.stdout.fileno(), False)
+                os.read(process.stdout.fileno(), 4096)
+            except Exception:
+                time.sleep(.05)
+        code = process.wait()
+    finally:
+        if selector is not None:
+            selector.close()
+        for stream in (process.stdin, process.stdout):
+            if not stream.closed:
+                stream.close()
+        pending = None
+    text = retained.decode(errors='replace')
+    if len(retained) == 2 * 1024 * 1024:
+        text = text.rsplit('\n', 1)[0] if '\n' in text else '[Oversized output omitted]'
+    return dict(code=code, error=error, output=prerequisite_redact(text, password),
+                note='Output is bounded; package/executable validation, not log text, determines availability.')
+
+
+class PrerequisitesPanel(QWidget, WorkerMixin):
+    _is_prerequisite_panel = True
+    def __init__(self, terminal, window):
+        super().__init__()
+        self._init_workers()
+        self.terminal, self.window = terminal, window
+        self.rows = []
+        self.progress.connect(self._receive_progress)
+        self.generation = 0
+        self.phase = 'idle'
+        layout = QVBoxLayout(self)
+        title = QLabel('Prerequisites')
+        title.setObjectName('heading')
+        layout.addWidget(title)
+        self.notice = QLabel('Read-only detection. No installation or selection is automatic.')
+        self.notice.setWordWrap(True)
+        self.notice.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(self.notice)
+        self.table = QTableWidget(0, 7)
+        self.table.setObjectName('prerequisites_table')
+        self.table.setMinimumHeight(320)
+        self.table.setHorizontalHeaderLabels(['Select', 'Scan / Section', 'Executable', 'Package', 'Requirement', 'Status / Explanation', 'Action'])
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setWordWrap(True)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(6, 112)
+        self.table.verticalHeader().setVisible(False)
+        layout.addWidget(self.table)
+        buttons = QHBoxLayout()
+        self.refresh_button = QPushButton('Refresh')
+        self.install_button = QPushButton('Install Selected')
+        self.install_button.setEnabled(False)
+        self.refresh_button.clicked.connect(self.refresh)
+        self.install_button.clicked.connect(lambda: self.install(self.selected_packages()))
+        buttons.addWidget(self.refresh_button)
+        buttons.addWidget(self.install_button)
+        layout.addLayout(buttons)
+        self.table.itemChanged.connect(self._selection_changed)
+        QTimer.singleShot(0, self.refresh)
+
+    def selected_packages(self):
+        return tuple(sorted({row['package'] for i, row in enumerate(self.rows)
+                             if row['installable'] and self.table.item(i, 0).checkState() == Qt.CheckState.Checked}))
+
+    def _selection_changed(self, item):
+        self.install_button.setEnabled(self.phase == 'idle' and bool(self.selected_packages()))
+
+    def _render(self, rows):
+        self.rows = rows
+        self.table.blockSignals(True)
+        self.table.setRowCount(len(rows))
+        for i, row in enumerate(rows):
+            select = QTableWidgetItem('')
+            select.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable if row['installable'] else Qt.ItemFlag.NoItemFlags)
+            select.setCheckState(Qt.CheckState.Unchecked)
+            self.table.setItem(i, 0, select)
+            for col, text in enumerate((row['section'], row['executable'], row['package'], row['requirement'], row['status'] + ' — ' + row['reason']), 1):
+                item = QTableWidgetItem(text)
+                item.setToolTip('<qt>' + html.escape(text) + '</qt>')
+                self.table.setItem(i, col, item)
+            button = QPushButton('Install')
+            button.setEnabled(row['installable'])
+            button.setToolTip(row['reason'])
+            button.clicked.connect(lambda checked=False, package=row['package']: self.install((package,)))
+            self.table.setCellWidget(i, 6, button)
+        self.table.blockSignals(False)
+        self.table.resizeRowsToContents()
+        self._selection_changed(None)
+        # No scan controllers are reconstructed; disabled actions explain navigation.
+        by_key = {}
+        for row in rows:
+            by_key.setdefault(row['key'], []).append(row)
+        mapping = {'btn_unused':'unused', 'btn_network':'network', 'btn_services':'services',
+                   'btn_temperature':'temperature', 'btn_drives':'drives', 'btn_lynis':'lynis',
+                   'btn_cve':'cve', 'btn_upgrades':'updates', 'btn_os_installed':'split_inventory',
+                   'btn_user_installed':'split_inventory'}
+        for name, key in mapping.items():
+            button = self.window.sidebar.action_buttons[name]
+            group = by_key.get(key, [])
+            available = bool(group) and all(r['status'] == 'Installed' for r in group)
+            if key in ('cve', 'updates') and not self.window.online_mode:
+                available = False
+            button.setProperty('prerequisiteAvailable', available)
+            button.setEnabled(available and self.window.sidebar.isEnabled())
+            button.setToolTip('Open Settings → Prerequisites to resolve unavailable dependencies.' if not available
+                              else 'Available; prerequisites are rechecked before execution.')
+            button.setAccessibleDescription(button.toolTip())
+
+    def _launch(self, function, complete, generation):
+        worker = PrerequisiteJob(function)
+        handled = False
+        def finished():
+            nonlocal handled
+            if handled or generation != self.generation:
+                return
+            handled = True
+            record = getattr(worker, '_scan_record', None)
+            error = worker.error or (record and record['error'])
+            lease = None
+            if record is not None:
+                lease = record['owner'].enter('Prerequisite continuation', record['token'])
+                if lease is None:
+                    return
+            try:
+                complete(worker.value, error)
+            except Exception as exc:
+                self.phase = 'idle'
+                self.notice.setText('Prerequisite operation failed: ' + str(exc))
+            finally:
+                if lease is not None:
+                    record['owner'].leave(lease)
+        worker.finished.connect(finished)
+        try:
+            self._start_worker(worker)
+        except Exception as exc:
+            record = getattr(worker, '_scan_record', None)
+            try:
+                dispatched = not getattr(worker, '_start_cleanup_done', False) and (worker.isRunning() or worker.isFinished())
+            except RuntimeError:
+                dispatched = handled
+            if dispatched:
+                worker.error = str(exc)
+                if record:
+                    record['error'] = str(exc)
+            elif not handled:
+                handled = True
+                if not getattr(worker, '_start_cleanup_done', False):
+                    self._workers.discard(worker)
+                    if record:
+                        record['owner'].retire(worker)
+                    worker.deleteLater()
+                complete(None, str(exc))
+        return worker
+
+    def refresh(self):
+        owner = scan_owner(self)
+        if self.phase != 'idle' or owner.shutdown_state != 'running' or owner.token is not None:
+            self.notice.setText('Wait for active work or cancel pending shutdown before refreshing.')
+            return
+        self.phase = 'detecting'
+        self.table.blockSignals(True)
+        for i in range(len(self.rows)):
+            self.table.item(i, 0).setCheckState(Qt.CheckState.Unchecked)
+        self.table.blockSignals(False)
+        self.install_button.setEnabled(False)
+        self.generation += 1
+        generation = self.generation
+        self.notice.setText('Checking local executables and cached package candidates; no installation.')
+        def done(rows, error):
+            self.phase = 'idle'
+            if error:
+                self._render([dict(row, status='Could Not Verify', reason=error, candidate=None, installable=False) for row in self.rows])
+                self.notice.setText('Could Not Verify — ' + error)
+            elif scan_owner(self).shutdown_state != 'safe_to_close':
+                self._render(rows)
+                self.notice.setText('Detection complete. All selections are unchecked. Installed does not mean a check passed.')
+        self._launch(detect_prerequisites, done, generation)
+
+    @scan_operation
+    def install(self, packages):
+        if self.phase != 'idle':
+            self.notice.setText('Wait for the current prerequisite operation.')
+            return
+        selected = tuple(sorted(set(packages)))
+        eligible = {r['package'] for r in self.rows if r['installable']}
+        if not selected or not set(selected).issubset(eligible):
+            self.notice.setText('No verified, applicable missing package selected. Refresh prerequisites.')
+            return
+        self.phase = 'preview'
+        self.generation += 1
+        generation = self.generation
+        self.install_button.setEnabled(False)
+        self.notice.setText('Building a read-only package plan. No elevation yet.')
+        def failed(message):
+            self.phase = 'idle'
+            self.notice.setText(message)
+            self._selection_changed(None)
+        def preview(plan, error):
+            if error:
+                failed('Installation preview rejected: ' + error)
+                return
+            if scan_owner(self).shutdown_state != 'running':
+                failed('Shutdown pending; installation approval was not requested.')
+                return
+            effects = '\n'.join(PREREQUISITE_EFFECTS.get(p, '') for p in selected)
+            command = ['/usr/bin/sudo', '-S', '-p', '', '/usr/bin/env', '-i',
+                       'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'HOME=/root', 'LC_ALL=C',
+                       'DEBIAN_FRONTEND=noninteractive', 'DEBIAN_PRIORITY=critical', *plan['command']]
+            text = ('Requested: ' + ', '.join(p + '=' + v for p, v in plan['requested']) +
+                    '\nResolved new packages (including dependencies):\n' + '\n'.join(p + '=' + v for p, v in plan['resolved']) +
+                    '\nRemovals: none. Upgrades: none.\n\n' + effects +
+                    '\nMaintainer scripts run as root and may configure/start services. Installation is not automatically reversible.' +
+                    '\nNo scan, hardening, repository addition or automatic apt update will run.' +
+                    '\nAfter dispatch there is no safe automatic cancellation or timeout; closing waits for APT.' +
+                    '\n\nExact command:\n' + shlex.join(command) + '\n\nConfigured candidate sources:\n' + prerequisite_redact(plan['policy']))
+            dialog = QDialog(self)
+            dialog.setWindowTitle('Approve prerequisite installation')
+            dialog.resize(740, 600)
+            preview_layout = QVBoxLayout(dialog)
+            preview_layout.addWidget(QLabel('Review exact packages, commands and side effects. No is the safe default.'))
+            content = QTextEdit()
+            content.setReadOnly(True)
+            content.setPlainText(text)
+            preview_layout.addWidget(content)
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No)
+            buttons.button(QDialogButtonBox.StandardButton.No).setDefault(True)
+            buttons.accepted.connect(dialog.accept)
+            buttons.rejected.connect(dialog.reject)
+            preview_layout.addWidget(buttons)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                failed('Installation cancelled before elevation; no packages were changed.')
+                return
+            if scan_owner(self).shutdown_state != 'running':
+                failed('Shutdown pending; installation was not dispatched.')
+                return
+            password = prompt_for_sudo_password(self, 'Approve only the displayed prerequisite package installation.',
+                                                terminal=self.terminal, force_prompt=True)
+            if password is None or scan_owner(self).shutdown_state != 'running':
+                failed('Installation cancelled before dispatch.')
+                return
+            self.phase = 'installing'
+            self.notice.setText('APT running. Do not interrupt package configuration; closing will wait. No scan will start automatically.')
+            def transaction():
+                return execute_prerequisite_plan(plan, password, lambda text: self.terminal_progress(generation, text))
+            def installed(value, install_error):
+                self.phase = 'verifying'
+                if value and value.get('output'):
+                    self.terminal.append(value['output'])
+                valid = type(value) is dict and type(value.get('code')) is int
+                outcome = install_error or ('Installation outcome unknown' if not valid else
+                          value['error'] or ('APT exited with code ' + str(value['code']) if value['code'] else ''))
+                def verified(result, verify_error):
+                    self.phase = 'idle'
+                    if verify_error:
+                        self.notice.setText('Installation outcome could not be verified: ' + verify_error)
+                        self._render([dict(row, status='Could Not Verify', reason=verify_error, candidate=None, installable=False)
+                                      if row['package'] in selected else row for row in self.rows])
+                        return
+                    self._render(result['rows'])
+                    missing = [name for name, verified_package in result['packages'].items() if not verified_package]
+                    missing += [r['executable'] for r in result['rows'] if r['package'] in selected and r['status'] != 'Installed']
+                    self.notice.setText(('Installation failed/uncertain: ' + outcome if outcome else
+                                         'Installation completed; dependency validation ' + ('incomplete: ' + ', '.join(missing) if missing else 'passed.')) +
+                                        ' No scan was started. Package installation is not automatically reversible.')
+                    self.terminal.append_info(self.notice.text())
+                self._launch(lambda: verify_prerequisite_plan(plan), verified, generation)
+            self._launch(transaction, installed, generation)
+        self._launch(lambda: build_prerequisite_plan(selected), preview, generation)
+
+    def _receive_progress(self, generation, text):
+        if generation == self.generation and self.phase in ('installing', 'verifying'):
+            self.terminal.append(text)
+
+    def terminal_progress(self, generation, text):
+        # Called from the transaction thread: queue text through a Qt signal,
+        # never touch a widget from outside the GUI thread.
+        self.progress.emit(generation, text)
+
+    progress = pyqtSignal(int, str)
+
+
+
+
 class ArrowSplitterHandle(QSplitterHandle):
     """Custom splitter handle that paints a small arrow cue."""
     def paintEvent(self, event):
@@ -3921,10 +4603,14 @@ def run_quick_checks(terminal, findings, with_coverage=False):
         ),
     ]
 
+    prerequisite_skips = 0
     total = len(CHECKS)
     passed = 0
     checked = 0
     for i, (desc, cmd, pass_fn, fix, why) in enumerate(CHECKS, start=1):
+        if not prerequisite_gate(terminal, 'quick', executable=cmd[0]):
+            prerequisite_skips += 1
+            continue
         prefix = f"[{i}/{total}]"
         try:
             r  = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
@@ -3993,7 +4679,7 @@ def run_quick_checks(terminal, findings, with_coverage=False):
     )
     SESSION.log_scan("Quick Security Checks", len(CHECKS) - passed)
     if with_coverage:
-        return coverage_result("succeeded" if checked == total else "partial" if checked else "failed",
+        return coverage_result("succeeded" if checked == total else "partial" if checked else "skipped" if prerequisite_skips else "failed",
                                f"{checked}/{total} checks produced usable evidence; {passed} settings passed.")
     return passed
 
@@ -4017,6 +4703,8 @@ def run_temperature_check(terminal, findings, with_coverage=False):
     """Run `sensors` and turn each temperature reading into a finding.
     Read-only, no sudo. If lm-sensors isn't installed, advise the user and
     return early — no attempt to auto-install."""
+    if not prerequisite_gate(terminal, 'temperature'):
+        return coverage_result('skipped', 'Missing prerequisite; see Settings → Prerequisites.') if with_coverage else 0
     terminal.append("\nHardware Temperature Check\n" + "─" * 50, T["ACCENT"])
 
     if not shutil.which("sensors"):
@@ -4176,67 +4864,11 @@ def run_drive_health_check(terminal, findings, parent_widget):
     "back up now" event, so we never bury the output behind silent sudo."""
     terminal.append("\nDrive Health Check (SMART)\n" + "─" * 50, T["ACCENT"])
 
-    # If smartmontools is missing, offer to install it on the spot — smartctl
-    # is a hard requirement for this scan. We capture the sudo password here
-    # and reuse it for the scan itself so the user is only prompted once.
-    cached_pw = None
-    if not shutil.which("smartctl"):
-        reply = QMessageBox.question(
-            parent_widget,
-            "smartmontools Required",
-            "This scan reads SMART health data using the `smartctl` "
-            "command, which is part of the `smartmontools` package — "
-            "and it's not installed.\n\n"
-            "Install it now?  (Runs: sudo apt install -y smartmontools)",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            terminal.append_info(
-                "Drive health check cancelled — smartmontools is required."
-            )
-            SESSION.log_scan("Drive Health Check", 0)
-            return 0
-
-        pw = prompt_for_sudo_password(
-            parent_widget,
-            "Installing smartmontools requires sudo.",
-            terminal=terminal,
-        )
-        if pw is None:
-            terminal.append_info(
-                "Drive health check cancelled — no sudo password supplied."
-            )
-            SESSION.log_scan("Drive Health Check", 0)
-            return 0
-
-        install_cmd = pkg_install("smartmontools")
-        terminal.append(
-            f"📦  Installing smartmontools: sudo {' '.join(install_cmd)}",
-            T["ACCENT"],
-        )
-        try:
-            r = subprocess.run(
-                ["sudo", "-S"] + install_cmd,
-                input=pw + b"\n",
-                capture_output=True,
-                timeout=180,
-            )
-        except Exception as e:
-            terminal.append_err(f"Install failed: {e}")
-            SESSION.log_scan("Drive Health Check", 0)
-            return 0
-
-        if r.returncode != 0 or not shutil.which("smartctl"):
-            terminal.append_err(
-                f"Install failed (exit {r.returncode}): "
-                f"{(r.stderr or b'').decode(errors='replace').strip()}"
-            )
-            SESSION.log_scan("Drive Health Check", 0)
-            return 0
-
-        terminal.append_ok("smartmontools installed successfully.")
-        cached_pw = pw   # reuse for the scan so we don't prompt twice
+    if not prerequisite_gate(terminal, 'drives'):
+        return 0
+    if not shutil.which('smartctl'):
+        terminal.append_warn('Skipped — Missing prerequisite: smartctl. Open Settings → Prerequisites. No installation or sudo requested.')
+        return 0
 
     drives = _list_physical_drives()
     if not drives:
@@ -4254,17 +4886,11 @@ def run_drive_health_check(terminal, findings, parent_widget):
         T["WARN"],
     )
 
-    # Reuse the password from the install step if we just installed
-    # smartmontools — no point asking twice in a row.
-    if cached_pw is not None:
-        pw = cached_pw
-    else:
-        pw = prompt_for_sudo_password(
-            parent_widget,
-            f"Drive health check needs sudo to read SMART data from "
-            f"{len(drives)} drive(s). READ-ONLY — nothing is written.",
-            terminal=terminal,
-        )
+    pw = prompt_for_sudo_password(
+        parent_widget,
+        f"Drive health check needs sudo to read SMART data from {len(drives)} drive(s). READ-ONLY — nothing is written.",
+        terminal=terminal,
+    )
     if pw is None:
         terminal.append_info(
             "Drive health check cancelled — no sudo password supplied."
@@ -5080,43 +5706,14 @@ class LynisPanel(QWidget, WorkerMixin):
     @scan_operation
     def run_lynis(self, on_complete=None, on_failed=None):
         """Run one authorized audit, using current-worker output only."""
-        join = scan_join(self)
-        if not shutil.which("lynis"):
-            reply = QMessageBox.question(
-                self, "Install Lynis?", "Lynis is not installed. Install it now? (requires sudo)",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            if reply != QMessageBox.StandardButton.Yes:
-                self.status.setText("Lynis audit skipped; dependency unavailable.")
-                if on_failed:
-                    on_failed()
-                return
-            password = self._get_sudo_password("Installing Lynis requires your sudo (administrator) password.", force_prompt=True)
-            if password is None:
-                if on_failed:
-                    on_failed()
-                return
-            self.status.setText("Installing Lynis...")
-            w = CommandWorker(["apt", "install", "lynis", "-y"], sudo=True, timeout=120, password=password)
-            state = {"success": False}
-            w.output_ready.connect(scan_slot(self, w, lambda text: self.terminal.append(text, T["OK"]), success=False, once=False))
-            w.error_ready.connect(scan_slot(self, w, self.terminal.append_err, success=False, once=False))
-            w.finished_ok.connect(scan_slot(self, w, lambda: state.update(success=True), success=True, once=True))
-            def installed():
-                record = getattr(w, "_scan_record", None)
-                if state["success"] and not (record and record["error"]):
-                    try:
-                        self.run_lynis(on_complete=on_complete, on_failed=on_failed, **join)
-                    except Exception as exc:
-                        self.status.setText("Lynis audit startup failed; evidence is incomplete/unknown.")
-                        self.terminal.append_err(f"Lynis startup failed: {exc}")
-                        if on_failed:
-                            on_failed()
-                else:
-                    self.status.setText("Lynis installation failed.")
-                    if on_failed:
-                        on_failed()
-            w.finished.connect(scan_slot(self, w, installed, success=False, once=True))
-            self._start_worker(w)
+        if not prerequisite_gate(self.terminal, 'lynis', on_failed=on_failed):
+            self.status.setText('Lynis audit skipped — see Settings → Prerequisites.')
+            return
+        if not shutil.which('lynis'):
+            self.status.setText('Lynis audit skipped — Missing prerequisite. Open Settings → Prerequisites.')
+            self.terminal.append_warn('Lynis is unavailable. No installation or audit authorization requested.')
+            if on_failed:
+                on_failed()
             return
         password = self._get_sudo_password("Running a Lynis audit requires your sudo (administrator) password.", force_prompt=True)
         if password is None:
@@ -5311,6 +5908,8 @@ class CvePanel(QWidget, WorkerMixin):
     @scan_operation
     def scan_cve(self, on_complete=None, on_terminal=None, assessment_id=None, on_failed=None):
         """Find installed packages and check them against the CVE database."""
+        if not prerequisite_gate(self.terminal, 'cve', on_terminal=on_terminal, on_failed=on_failed):
+            return
         if (getattr(self, "_assessment_owner", None) is not None
                 and assessment_id != self._assessment_owner):
             self.terminal.append_warn("Assessment owns the CVE/update scans; wait for completion.")
@@ -5553,6 +6152,8 @@ class CvePanel(QWidget, WorkerMixin):
     def scan_upgrades(self, on_complete=None, on_failed=None, on_terminal=None, assessment_id=None):
         """Check which packages have newer versions available.
         Uses DEBIAN_FRONTEND=noninteractive so apt never waits for user input."""
+        if not prerequisite_gate(self.terminal, 'updates', on_terminal=on_terminal, on_failed=on_failed):
+            return
         if (getattr(self, "_assessment_owner", None) is not None
                 and assessment_id != self._assessment_owner):
             self.terminal.append_warn("Assessment owns the CVE/update scans; wait for completion.")
@@ -6152,7 +6753,7 @@ class ToolsPanel(QWidget):
         btn.setObjectName("ok")
         btn.setFixedSize(148, 24)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.clicked.connect(lambda: ScheduleScanDialog(self).exec())
+        btn.clicked.connect(lambda: open_prerequisite_scheduler(self))
         row.addWidget(btn)
 
         return frame
@@ -6710,7 +7311,12 @@ class SideBar(QWidget, WorkerMixin):
             for key in ("btn_os_installed", "btn_user_installed", "btn_wizard"):
                 button = getattr(self, "action_buttons", {}).get(key)
                 if button is not None:
-                    button.setEnabled(self.isEnabled())
+                    button.setEnabled(self.isEnabled() and button.property('prerequisiteAvailable') is not False)
+
+            for button in getattr(self, '_menu_buttons', ()):
+                available = button.property('prerequisiteAvailable')
+                if type(available) is bool:
+                    button.setEnabled(self.isEnabled() and available)
 
     def _mark_active_btn(self, btn):
         """Visually mark one sidebar menu button as the current selection.
@@ -6832,10 +7438,14 @@ class SideBar(QWidget, WorkerMixin):
     # ── Scan: unused software ─────────────────────────────────────────────
     @scan_operation
     def _scan_unused(self):
+        if not prerequisite_gate(self.terminal, 'unused', on_failed=self._scan_failed):
+            return
         self._pre_scan(L("btn_unused"), "scan", "unused")
         self._do_scan_unused()
 
     def _do_scan_unused(self, on_terminal=None):
+        if not prerequisite_gate(self.terminal, 'unused', on_terminal=on_terminal):
+            return
         if not shutil.which("deborphan"):
             self.terminal.append_warn(
                 "deborphan is not installed. Install with: sudo apt install deborphan"
@@ -6883,10 +7493,14 @@ class SideBar(QWidget, WorkerMixin):
     # ── Scan: open ports ──────────────────────────────────────────────────
     @scan_operation
     def _scan_network(self):
+        if not prerequisite_gate(self.terminal, 'network', on_failed=self._scan_failed):
+            return
         self._pre_scan(L("btn_network"), "scan", "network")
         self._do_scan_network()
 
     def _do_scan_network(self, on_terminal=None):
+        if not prerequisite_gate(self.terminal, 'network', on_terminal=on_terminal):
+            return
         self._run_cmd(["ss", "-tunlp"], "Network port scan", self._parse_network,
                       on_terminal=on_terminal)
 
@@ -6955,10 +7569,14 @@ class SideBar(QWidget, WorkerMixin):
     # ── Scan: risky services ──────────────────────────────────────────────
     @scan_operation
     def _scan_services(self):
+        if not prerequisite_gate(self.terminal, 'services', on_failed=self._scan_failed):
+            return
         self._pre_scan(L("btn_services"), "scan", "services")
         self._do_scan_services()
 
     def _do_scan_services(self, on_terminal=None):
+        if not prerequisite_gate(self.terminal, 'services', on_terminal=on_terminal):
+            return
         # List of (name, type, risk, detail, remove_cmd, disable_cmd)
         RISKY_SVCS = [
             ("telnet",       "SERVICE","HIGH",  "Unencrypted remote shell — everything you type is visible on the network",                  "apt purge telnet",       None),
@@ -7003,6 +7621,8 @@ class SideBar(QWidget, WorkerMixin):
     # ── Scan: all installed (legacy, kept for internal use) ──────────────
     @scan_operation
     def _scan_installed(self):
+        if not prerequisite_gate(self.terminal, 'inventory'):
+            return
         self._pre_scan(L("btn_installed"), "scan", "installed")
         if PKG_MGR == "apt":
             cmd = ["dpkg-query", "-W", "--showformat=${Package} ${Version}\n"]
@@ -7017,6 +7637,8 @@ class SideBar(QWidget, WorkerMixin):
     def _scan_os_installed(self):
         """List packages that came with the OS — not explicitly installed by the user.
         These are the difference between all packages and apt-mark showmanual output."""
+        if not prerequisite_gate(self.terminal, 'split_inventory'):
+            return
         self._pre_scan(L("btn_os_installed"), "scan", "os_installed")
         if PKG_MGR != "apt":
             self.terminal.append_warn("OS vs user split requires apt (not available on this system).")
@@ -7066,6 +7688,8 @@ class SideBar(QWidget, WorkerMixin):
     def _scan_user_installed(self):
         """List packages the user deliberately installed — from apt-mark showmanual.
         Each result has a REMOVE button so the user can clean up intentionally."""
+        if not prerequisite_gate(self.terminal, 'split_inventory'):
+            return
         self._pre_scan(L("btn_user_installed"), "scan", "user_installed")
         if PKG_MGR != "apt":
             self.terminal.append_warn("User-installed scan requires apt (not available on this system).")
@@ -7232,6 +7856,8 @@ class SideBar(QWidget, WorkerMixin):
     @scan_operation
     def _run_lynis(self):
         """Run Lynis audit — switch to the Lynis page to show results."""
+        if not prerequisite_gate(self.terminal, 'lynis', on_failed=self._scan_failed):
+            return
         self._pre_scan(L("btn_lynis"), "checks", "lynis")
         self.stack.setCurrentIndex(2)  # Page 2 = LynisPanel
         self.lynis_panel.run_lynis(
@@ -7246,6 +7872,8 @@ class SideBar(QWidget, WorkerMixin):
     @scan_operation
     def _scan_temperature(self):
         """Hardware temperature scan via lm-sensors. Read-only, no sudo."""
+        if not prerequisite_gate(self.terminal, 'temperature', on_failed=self._scan_failed):
+            return
         self._pre_scan(L("btn_temperature"), "checks", "temperature")
         run_temperature_check(self.terminal, self.findings)
         self._post_scan_check()
@@ -7253,6 +7881,8 @@ class SideBar(QWidget, WorkerMixin):
     @scan_operation
     def _scan_drives(self):
         """Drive SMART health scan. Needs sudo; stays read-only (no -t)."""
+        if not prerequisite_gate(self.terminal, 'drives', on_failed=self._scan_failed):
+            return
         self._pre_scan(L("btn_drives"), "checks", "drives")
         run_drive_health_check(self.terminal, self.findings, self)
         self._post_scan_check()
@@ -7261,6 +7891,8 @@ class SideBar(QWidget, WorkerMixin):
     @scan_operation
     def _scan_cve(self):
         """Run CVE check — switch to CVE page to show results."""
+        if not prerequisite_gate(self.terminal, 'cve', on_failed=self._scan_failed):
+            return
         self._pre_scan(L("btn_cve"), "cve", "cve")
         self.stack.setCurrentIndex(1)  # Page 1 = CvePanel
         self.cve_panel.scan_cve(on_complete=self._post_scan_check, on_failed=self._scan_failed, **scan_join(self))
@@ -7268,6 +7900,8 @@ class SideBar(QWidget, WorkerMixin):
     @scan_operation
     def _scan_upgrades(self):
         """Check for available updates — switch to CVE page."""
+        if not prerequisite_gate(self.terminal, 'updates', on_failed=self._scan_failed):
+            return
         self._pre_scan(L("btn_upgrades"), "cve", "upgrades")
         self.stack.setCurrentIndex(1)  # Page 1 = CvePanel
         self.cve_panel.scan_upgrades(
@@ -8224,7 +8858,7 @@ class AuditDashboard(QMainWindow):
         self.assessment_tabs.addTab(self.cve_panel, "CVEs / Updates")
         self.assessment_tabs.addTab(self.lynis_panel, "Lynis")
         self.page_layouts["Assessments"].addWidget(self.assessment_tabs, 1)
-        self._workspace_action("Assessments", "Open scheduler", lambda: ScheduleScanDialog(self.tools_panel).exec())
+        self._workspace_action("Assessments", "Open scheduler", self._open_scheduler)
 
         self.page_layouts["Findings"].addWidget(self.findings, 1)
         self.remediation_tabs = QTabWidget()
@@ -8307,6 +8941,11 @@ class AuditDashboard(QMainWindow):
         self.theme_lock_btn.clicked.connect(self._toggle_theme_lock)
         self._update_theme_lock_button()
         self.page_layouts["Settings"].addWidget(self.theme_lock_btn)
+        self.prerequisites = PrerequisitesPanel(self.terminal, self)
+        self.terminal._prerequisites = self.prerequisites
+        self._workspace_action("Settings", "Prerequisites — review missing scan tools", self._open_prerequisites)
+        self.page_layouts["Settings"].addWidget(self.prerequisites)
+        self._workspace_action("Assessments", "Unavailable scan? Open Prerequisites", self._open_prerequisites)
         self._workspace_action("Settings", "Change / detect profile", self._detect_profile)
         self._workspace_action("Settings", "Show command reference", self._show_code)
         self._workspace_action("Settings", "Show diagnostic log in Activity", self._open_diagnostics)
@@ -8390,10 +9029,18 @@ class AuditDashboard(QMainWindow):
         self.activity_toggle.setChecked(True)
         self._show_dev_log()
 
+    def _open_scheduler(self):
+        open_prerequisite_scheduler(self.tools_panel)
+
+    def _open_prerequisites(self):
+        self._navigate("Settings")
+        self.stack.currentWidget().ensureWidgetVisible(self.prerequisites)
+
     def _shutdown_busy(self):
         owner = scan_owner(self)
         # References, not isRunning(): queued results/finished still need delivery.
-        return bool(owner and (owner.token is not None or owner.workers))
+        return bool((owner and (owner.token is not None or owner.workers))
+                    or getattr(getattr(self, "prerequisites", None), "_workers", set()))
 
     def closeEvent(self, event):
         owner = scan_owner(self)

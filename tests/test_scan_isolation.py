@@ -284,27 +284,17 @@ class ScanIsolation(unittest.TestCase):
                 self.terminal.append_ok.assert_not_called()
                 self.assertIsNone(self.owner.token)
 
-    def test_lynis_install_handoff_keeps_same_owner_until_audit_finishes(self):
+    def test_missing_lynis_never_installs_or_requests_audit_authorization(self):
         which=Mock(return_value=None)
         box=SimpleNamespace(question=Mock(return_value=1),StandardButton=SimpleNamespace(Yes=1,No=2))
         with patch.dict(NS,shutil=SimpleNamespace(which=which),QMessageBox=box):
             self.sidebar._run_lynis()
-            install=sequence.ManualWorker.created[-1]
-            token=self.owner.token
-            install.outcome()
-            self.assertEqual(len(sequence.ManualWorker.created),1)
-            which.return_value='/fake/lynis'
-            install.end()
-        audit=sequence.ManualWorker.created[-1]
-        self.assertIsNot(audit,install)
-        self.assertEqual(self.owner.token,token)
-        self.assertEqual(self.owner.workers,{audit})
-        install.outcome();install.end()
-        self.assertEqual(len(sequence.ManualWorker.created),2)
-        audit.full_output=COMPLETE_LYNIS
-        audit.outcome();audit.end()
+        self.assertEqual(sequence.ManualWorker.created, [])
         self.assertIsNone(self.owner.token)
-        self.terminal.append_ok.assert_called_once_with('Lynis Full Audit complete.')
+        self.assertEqual(self.owner.workers, set())
+        self.lynis._get_sudo_password.assert_not_called()
+        box.question.assert_not_called()
+        self.terminal.append_ok.assert_not_called()
 
     def test_duplicate_cve_response_is_consumed_once(self):
         self.sidebar._scan_cve()

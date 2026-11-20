@@ -88,6 +88,29 @@ Two previously observed SQLite-test ResourceWarnings remain outside this change.
 Initial visual iterations are preserved; final evidence is the 12:35 run under
 `screenshots/increment4g/`. GUI preferences/logs remain outside the repository.
 
+## Scan prerequisites (Increment 4H)
+
+`tests/test_prerequisites.py` extracts production prerequisite definitions and uses
+synthetic metadata/processes. `tests/test_prerequisites_ui.py` runs the real Qt
+`ui_prerequisites_probe.py` in an isolated process. The probe blocks all process
+creation/host commands, supplies fake package transactions and temporary state, and
+checks the table's five statuses, unchecked/deduplicated selection, approval before
+authentication, cancellation/failure, stale/duplicate callbacks, startup rollback,
+post-install availability, targeted skipped scans and pending shutdown. A real QThread
+holds a synthetic transaction open; no real apt, sudo or remediation is executed.
+
+```bash
+python3 -B -m unittest discover -s tests -p 'test_prerequisites*.py' -v
+QT_QPA_PLATFORMTHEME=generic python3 -B tests/ui_prerequisites_probe.py --screenshots screenshots/increment4h
+```
+
+Use the second command only on an authorized desktop. It preserves existing evidence
+and uses synthetic endpoint/package data; preferences and runtime logs remain temporary.
+Legacy UI fixtures now supply synthetic prerequisite detection. Two old Lynis inline-
+installation tests were replaced by assertions that missing Lynis never installs or
+requests audit authorization; existing live-audit/streaming failure tests remain.
+The streaming sidebar fixture now supplies its real controller's terminal dependency.
+
 ## Automated command-outcome regression tests
 
 ```bash
@@ -418,3 +441,12 @@ python3 -B tests/capture_ui_baseline.py --check tests/fixtures/ui_baseline_ui_bl
 The corrected captures match; original Stage 1 captures remain available for
 comparison. Only report-generation outcomes changed; finding/score/coverage and
 sequence fields plus the four original coverage fragments are unchanged.
+
+
+Increment 4H executed result (2026-11-17): **248 tests, OK** in 23.781 seconds,
+including 24 new prerequisite tests. Existing seven-step, coverage, streaming,
+SQLite, command-outcome and 1,000-row resizing regressions passed. Corrected
+Stage 1 captures: **MATCH**. Desktop prerequisite fixtures used fake metadata and
+transactions, including deferred shutdown and cancellation before elevation; no
+real package installation or sudo operation was performed. See
+[prerequisite limits and security decisions](prerequisites.md).

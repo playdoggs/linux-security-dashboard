@@ -40,6 +40,9 @@ def main():
         spec = importlib.util.spec_from_file_location('findings_dashboard', ROOT / 'linux-security-dashboard.py')
         m = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(m)
+        m.detect_prerequisites = lambda: [dict(key=r[0], section=r[1], executable=r[2], package=r[3],
+            requirement=r[4], status='Installed', reason='Synthetic presence', candidate=None, installable=False)
+            for r in m.PREREQUISITES]
         m.pkg_installed = lambda name: False
         m.get_system_info = lambda: {key: 'fixture-' + key for key in ('hostname', 'os', 'kernel', 'arch', 'cpu', 'ram', 'uptime')}
         m.check_update_age = lambda: (None, '')

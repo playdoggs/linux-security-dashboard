@@ -71,6 +71,15 @@ Alt+1–7 selects sections; Ctrl+R retains the three-step legacy scan and
 Ctrl+1–5 retains individual scan shortcuts (CVE shortcut requires Online mode).
 See [navigation mapping and validation](agent_docs/ui_navigation_shell.md).
 
+## Scan prerequisites
+
+Open **Settings → Prerequisites**, or use the link from **Assessments**, to review
+missing scan tools. Detection is automatic and read-only. Select packages yourself
+or use an individual Install button; every installation needs a reviewed plan and
+explicit approval before elevation. Unsupported releases and packages without verified
+candidates cannot be installed here. Installation never starts a scan automatically.
+See [prerequisite workflow and safety limits](agent_docs/prerequisites.md).
+
 ## Who is this for
 
 - Linux home users who switched from Windows and aren't sure if their system is secure

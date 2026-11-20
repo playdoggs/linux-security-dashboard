@@ -31,7 +31,7 @@ def main():
                             ('XDG_CACHE_HOME', 'cache'), ('XDG_STATE_HOME', 'state')]})
         os.environ['GSETTINGS_BACKEND'] = 'memory'
         from PyQt6 import sip
-        from PyQt6.QtCore import Qt, QThread, pyqtSignal
+        from PyQt6.QtCore import Qt, QThread, pyqtSignal, QCoreApplication, QEvent
         from PyQt6.QtTest import QTest
         from PyQt6.QtWidgets import QApplication, QPushButton, QLineEdit, QMessageBox
         real_run = subprocess.run
@@ -47,6 +47,9 @@ def main():
         spec = importlib.util.spec_from_file_location('navigation_dashboard', SOURCE)
         m = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(m)
+        m.detect_prerequisites = lambda: [dict(key=r[0], section=r[1], executable=r[2], package=r[3],
+            requirement=r[4], status='Installed', reason='Synthetic presence', candidate=None, installable=False)
+            for r in m.PREREQUISITES]
         m.pkg_installed = lambda name: False
         m.get_system_info = lambda: {key: 'fixture-' + key for key in
                                     ('hostname', 'os', 'kernel', 'arch', 'cpu', 'ram', 'uptime')}
@@ -236,6 +239,9 @@ def main():
                     worker.wait(4000)
             win._workspace_timer.stop()
             win.close()
+            app.processEvents()
+            win.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
             app.processEvents()
             subprocess.run = real_run
 

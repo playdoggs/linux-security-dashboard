@@ -159,7 +159,7 @@ class StreamingOutcomes(unittest.TestCase):
         sidebar_entry = method('SideBar', '_run_lynis')
         for case in ('success', 'nonzero', 'missing', 'timeout', 'exception'):
             with self.subTest(case=case):
-                sidebar = SimpleNamespace(_pre_scan=Mock(), stack=Mock(),
+                sidebar = SimpleNamespace(terminal=Mock(), _pre_scan=Mock(), stack=Mock(),
                                           _post_scan_check=Mock(), _scan_failed=Mock())
                 panel = SimpleNamespace(status=Mock(), terminal=Mock(), output=Mock(),
                                         _get_sudo_password=Mock(return_value=b'fake'),

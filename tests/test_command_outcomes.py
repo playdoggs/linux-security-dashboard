@@ -27,7 +27,7 @@ for node in TREE.body:
     name = node.name if isinstance(node, (ast.FunctionDef, ast.ClassDef)) else None
     if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
         name = node.targets[0].id
-    if name in {"UI_TYPOGRAPHY", "ThemeColor", "theme_value", "set_theme_style", "UNDO_SERVICE_TARGETS", "UNDO_PACKAGE_RE", "build_undo_argv",
+    if name in {"prerequisite_gate", "UI_TYPOGRAPHY", "ThemeColor", "theme_value", "set_theme_style", "UNDO_SERVICE_TARGETS", "UNDO_PACKAGE_RE", "build_undo_argv",
                 "make_undo_operation", "undo_presentation", "ASSESSMENT_STEPS", "COVERAGE_STATES",
                 "coverage_result", "assessment_complete", "assessment_verdict", "assessment_details", "probe_package", "ScanOwnership", "scan_owner", "scan_join", "scan_operation", "bind_scan_worker", "scan_slot"}:
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(SOURCE), "exec"), NS)
@@ -250,7 +250,7 @@ class CommandOutcomes(unittest.TestCase):
                     self.assertEqual(panel.status.setText.call_args.args[0],
                                      "Update check failed — see terminal output.")
 
-    def test_lynis_install_failures_reach_actual_sidebar_failure_handler(self):
+    def test_missing_lynis_reaches_sidebar_failure_without_inline_installation(self):
         install = method("LynisPanel", "run_lynis")
         entry = method("SideBar", "_run_lynis")
         for outcome in (subprocess.CompletedProcess([], 1, b"", b"failed"),
@@ -271,12 +271,14 @@ class CommandOutcomes(unittest.TestCase):
                                       return_value=outcome if isinstance(outcome, subprocess.CompletedProcess) else None,
                                       side_effect=outcome if isinstance(outcome, Exception) else None) as run:
                         entry(sidebar)
-                self.assertEqual(run.call_count, 1)  # No retry or audit after failure.
+                self.assertEqual(run.call_count, 0)  # No package manager or audit is dispatched.
+                panel._get_sudo_password.assert_not_called()
+                box.question.assert_not_called()
                 self.assertIsNone(sidebar._pending_section_action)
                 sidebar._mark_section_action_done.assert_not_called()
                 sidebar.findings.show_all_ok_banner.assert_not_called()
                 sidebar.findings.hide_all_ok_banner.assert_called_once()
-                self.assertEqual(panel.status.setText.call_args.args[0], "Lynis installation failed.")
+                self.assertIn("Missing prerequisite", panel.status.setText.call_args.args[0])
 
     def test_partial_wizard_failure_refreshes_without_claiming_completion(self):
         advance = method("GuidedWizard", "_run_next_fix_cmd")
