@@ -5,3 +5,15 @@ __pycache__/
 venv/
 .audit-dashboard.log
 .audit-dashboard-history/
+
+# Local editor/session state; shared VS Code recommendations remain tracked.
+/.obsidian/
+/.codex
+/.vscode/mcp.json
+
+# Generated review artifacts stay local or accompany releases, not source commits.
+/*review*.tar.gz
+/*review*.patch
+
+# Preserve curated tracked examples; do not automatically add new GUI captures.
+/screenshots/
