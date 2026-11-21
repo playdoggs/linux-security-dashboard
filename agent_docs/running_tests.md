@@ -450,3 +450,126 @@ Stage 1 captures: **MATCH**. Desktop prerequisite fixtures used fake metadata an
 transactions, including deferred shutdown and cancellation before elevation; no
 real package installation or sudo operation was performed. See
 [prerequisite limits and security decisions](prerequisites.md).
+
+## Consolidated 4H hardening
+
+Final full suite: **256 tests passed in 24.786 seconds** (2026-11-17); corrected
+Stage 1 captures MATCH. Additional tests reject unknown APT actions, separate PATH
+discovery from protected paths, reject unsafe installer parents, pace EOF recovery,
+retain failures with empty exception text, count unique report queries and verify
+shared structural selected-state rules. The production Qt navigation fixture also
+exercises selected profile/checkbox/row state at 1100×700 in Enterprise/Hybrid.
+
+Five selected regressions were run with the pre-correction source AST and failed
+(nine failing assertions/subtests, zero fixture errors), then passed against the
+correction. A repeated desktop fixture exposed focus/selection setup timing; after
+settling focus before selecting, it passed. Profile Tab focus was unavailable on
+that desktop run and is not claimed as verified. See the
+[full inventory, evidence and limitations](consolidated_hardening_review.md).
+
+## Final 4H confirmation and keyboard hardening
+
+Full suite: **262 tests passed in 24.525 seconds** (2026-11-18). Four new test
+methods run isolated production Qt pre-action/message/profile definitions and guard
+the audited decision sites. The existing full prerequisite fixture now sends real
+keyboard events instead of accepting/rejecting the dialog directly, asserting the
+visible dialog's default, autoDefault flags and focused button first. Unit worker
+tests mock only the modal decision via an explicit adapter; real-dialog coverage
+resides in the keyboard/prerequisite fixtures.
+
+The new prerequisite regression fails against the pre-fix source and passes after
+correction. Existing scan, streaming, persistence, shutdown and ownership tests pass;
+corrected Stage 1 captures MATCH. Enterprise/Hybrid desktop fixtures and six dedicated
+desktop keyboard probes passed. Synthetic evidence and limitations are linked in
+[the confirmation audit](ui/CONFIRMATION_REVIEW.md). No real installation, sudo or
+host security change was used. Non-fatal Wayland text-input warnings were observed
+after one desktop fixture; that fixture exited successfully.
+
+
+## Final security hardening — H03/H05/H16 (2026-11-21)
+
+```bash
+python3 -B -m unittest discover -s tests -p test_privileged_hardening.py -q
+python3 -B -m unittest discover -s tests -p 'test_*.py' -q
+python3 -B tests/capture_ui_baseline.py --check tests/fixtures/ui_baseline_ui_bl_001
+git diff --check
+```
+
+Executed: focused **26 passed**; full **288 passed** in **28.785 seconds**, zero
+failures/errors/skips; baseline MATCH and diff check clean. The suite includes
+isolated local HTTP fixtures and unprivileged subprocesses; no real sudo or package
+operation runs. New tests exercise production validation/collector/worker methods,
+protected-path policy, malformed diagnostics, cancellation, transaction I/O/progress
+failures, Qt ownership through shutdown and stale callback rejection.
+
+`privileged_test_support.py` adapts older AST fixtures to the new shared boundary:
+it supplies deterministic paths and a transaction adapter which refuses to run
+without mocked `subprocess.run`. Those adapters are not evidence of actual APT
+safety. `test_privileged_hardening.py` loads the actual collector and resolver for
+the focused security tests and uses mocked processes/filesystem metadata. A gated
+real CommandWorker/QThread proves shutdown retention without spawning a package
+manager. The oversized blocked-stdin streaming probe substitutes a Python child and
+invocation builder to test pipe backpressure independently of the new 4096-byte
+authentication limit; it never executes sudo.
+
+Four selected production regressions fail against the saved pre-batch AST and pass
+against the correction: legacy timeout-path delegation, protected dispatch argv,
+unexpected parser/runtime exception leakage and raw rejected-line leakage. No
+original source file was restored or edited to run this comparison.
+
+Desktop: navigation and prerequisite fixtures plus pre-action/message/profile
+keyboard probes in both Enterprise and Hybrid passed (eight successful processes).
+Synthetic metadata/transactions and temporary preferences only. H15 default/focused
+No, Enter/Escape/Space/Tab and profile traversal remained intact. Evidence is under
+`screenshots/final-security-hardening-20261121-081637-0e26acd0/`. Two non-fatal
+Wayland text-input warnings occurred in the prerequisite desktop fixture. Final
+full-suite stderr contained no warnings; an interim run emitted two SQLite
+ResourceWarnings, not reproduced in the final run. No full real installation,
+privileged remediation, desktop teardown or distribution matrix is claimed.
+
+The final `dpkg-reconfigure` classification and defensive logging-null check followed
+the desktop captures; all presentation definitions are unchanged. The final full suite
+(including offscreen real-widget fixtures) covers the final source. Read-only host
+stat checks verified protected sudo/env/apt/apt-get/systemctl/dpkg-reconfigure paths;
+no executable was run by those checks. A UID-mapped sandbox correctly rejected its
+non-root-looking paths; the policy was not weakened to accommodate that sandbox.
+
+## Release candidate acceptance — 2026-11-21
+
+Final regression command (current source):
+
+```bash
+QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic python3 -B -m unittest discover -s tests -p 'test_*.py' -q
+python3 -B tests/capture_ui_baseline.py --check tests/fixtures/ui_baseline_ui_bl_001
+```
+
+Results: **341 passed**, zero failures, errors or skips; corrected Stage 1 captures
+**MATCH**. The relevant GUI/functional subset passed **116 tests** (included in the
+341). `git diff --check` passed. The first earlier full run had an offscreen Findings
+interaction timeout; its five-test group and subsequent full runs passed. It was
+not silently counted as a successful run.
+
+All three current real-widget fixtures (`tests/ui_navigation_probe.py`,
+`tests/ui_prerequisites_probe.py`, `tests/ui_findings_probe.py`) also passed on the
+native Wayland display with process-local `QT_QPA_PLATFORMTHEME=generic`.
+`QApplication.platformName()` and QWindow exposure events established that native
+windows were displayed. The fixtures verified seven-page navigation, Enterprise/
+Hybrid themes, 1100x700 logical layouts, selected/checked/focused controls, dialog
+keyboard handling, cancellation, real QThread ownership and clean shutdown.
+
+Native evidence is local under
+`screenshots/release-candidate-acceptance/native-wayland-20261121-175032-a6f98f/`;
+offscreen evidence is under
+`screenshots/release-candidate-acceptance/20261121-174108-6bb175/`.
+Each contains an index and 55 widget captures. Generated evidence/review bundles
+are intentionally ignored, rather than published as source assets; approved UI
+reference images remain tracked. Three native Wayland text-input warnings occurred
+without failed checks; offscreen screenshot fixtures emitted 21 size-hint warnings
+and one unsupported-raise warning. No crash or running-QThread destruction was
+reported. This is not a dedicated leak audit.
+
+No real sudo, APT, installation, remediation or live host scans ran. Preferences,
+SQLite history and logs were temporary. Production first-run startup, native GTK
+theme negotiation, screen-reader support, exhaustive display scaling and real
+privileged operations remain unverified. Acceptance is bounded synthetic GUI
+evidence, not independent security approval or a comprehensive host assessment.

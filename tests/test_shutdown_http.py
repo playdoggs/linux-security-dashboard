@@ -364,6 +364,8 @@ class GuidedFixStartup(unittest.TestCase):
                                    question=Mock(return_value=1), information=Mock())
         self.namespace = dict(NS, QDialog=DialogStub, QMessageBox=self.box,
                               prompt_for_sudo_password=Mock(return_value=b'fake-password'))
+        from test_command_outcomes import question_stub
+        self.namespace['privileged_question']=question_stub(self.namespace)
         mixin = load_definition(CLASSES['WorkerMixin'], self.namespace)
         self.namespace['WorkerMixin'] = mixin
         wizard_type = load_definition(CLASSES['GuidedWizard'], self.namespace)
@@ -423,7 +425,7 @@ class GuidedFixStartup(unittest.TestCase):
         w.done(0)
         self.assertTrue(w.dismissed)
         event = Mock(); w.closeEvent(event); event.accept.assert_called_once()
-        self.assertTrue(any('injected guided startup failure' in str(call)
+        self.assertTrue(any('Fix command startup failed: Operation failed (RuntimeError)' in str(call)
                             for call in w.terminal.append_err.call_args_list))
 
     def test_first_command_pre_dispatch_failure_restores_dismissal(self):

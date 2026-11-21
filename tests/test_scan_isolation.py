@@ -341,6 +341,25 @@ class ScanIsolation(unittest.TestCase):
         self.terminal.append_ok.assert_not_called()
         self.assertIsNone(self.owner.token)
 
+    def test_partial_lynis_derived_secret_is_not_published_or_retained(self):
+        password = b'observation: warning Zebra42'
+        self.lynis._get_sudo_password.return_value = password
+        self.sidebar._run_lynis()
+        worker = sequence.ManualWorker.created[-1]
+        worker.full_output = 'warning Zebra42\nwarning useful safe issue\n'
+        with patch('logging.error') as log:
+            worker.outcome(success=False)
+            worker.end()
+            worker.end()  # Duplicate completion cannot publish it later.
+        self.assertEqual(worker.full_output, '')
+        self.assertEqual(len(self.rows), 1)
+        self.assertIn('useful safe issue', self.rows[0][3])
+        self.assertNotIn(password.decode(), str(self.rows) + str(self.terminal.mock_calls) +
+                         str(self.lynis._lappend.mock_calls) + str(log.mock_calls))
+        self.assertIn('withheld', str(self.lynis._lappend.mock_calls))
+        self.terminal.append_ok.assert_not_called()
+        self.assertIsNone(self.owner.token)
+
     def test_admission_banner_exception_rolls_back_and_allows_retry(self):
         self.rows.append('keep finding')
         self.display._assessment_coverage={'id':'prior','active':False,'outcomes':[]}

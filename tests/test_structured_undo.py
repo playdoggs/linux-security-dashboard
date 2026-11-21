@@ -14,6 +14,8 @@ import re
 import shlex
 import unittest
 from test_undo_history_store import Store, StorageError
+from test_command_outcomes import question_stub
+from privileged_test_support import install_helpers
 
 SOURCE = Path(__file__).resolve().parents[1] / 'linux-security-dashboard.py'
 TREE = ast.parse(SOURCE.read_text())
@@ -21,6 +23,7 @@ NS = dict(wraps=wraps, uuid=uuid, re=re, shlex=shlex, PKG_MGR='apt', json=json, 
           subprocess=subprocess, QThread=QThread, pyqtSignal=pyqtSignal,
           T={'OK': 'green'}, strip_ansi=lambda text: text,
           UndoHistoryError=StorageError, UNDO_LOG=[])
+install_helpers(NS)
 NAMES = {'ThemeColor','theme_value','set_theme_style','ScanOwnership','scan_owner','scan_join','scan_operation','bind_scan_worker','scan_slot','UNDO_SERVICE_TARGETS', 'UNDO_PACKAGE_RE', 'build_undo_argv',
          'make_undo_operation', 'make_undo_cmd', 'UNDO_METADATA_FIELDS',
          'MAX_UNDO_LINE_BYTES', 'MAX_UNDO_HISTORY_BYTES', 'normalize_undo_record',
@@ -33,6 +36,7 @@ for node in TREE.body:
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(SOURCE), 'exec'), NS)
 build = NS['build_undo_argv']
 derive = NS['make_undo_operation']
+NS['privileged_question']=question_stub(NS)
 
 
 def record(**operation):
@@ -223,7 +227,7 @@ class UndoIntegration(unittest.TestCase):
                                       side_effect=outcome if isinstance(outcome, Exception) else None) as run:
                         execute(obj, persisted)
                 command = run.call_args.args[0]
-                self.assertEqual(command[-4:], ['apt', 'install', '-y', 'example'])
+                self.assertEqual(command[-4:], ['/usr/bin/apt', 'install', '-y', 'example'])
                 text = box.question.call_args.args[2]
                 self.assertIn('sudo apt install -y example', text)
                 self.assertNotIn('attacker-command', text)

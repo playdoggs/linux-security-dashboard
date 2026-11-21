@@ -64,6 +64,7 @@ def main():
             plan=dict(requested=tuple((p,'1') for p in names),resolved=tuple((p,'1') for p in names),
                       command=tuple(m.prerequisite_apt_argv([(p,'1') for p in names])),policy='Synthetic trusted repository',state='fixture')
             plans.append(plan);return plan
+        m.resolve_privileged_executable=lambda name:'/usr/bin/'+name.rsplit('/',1)[-1]
         m.build_prerequisite_plan=build
         def transaction(plan,password,progress):
             transactions.append(plan)
@@ -77,7 +78,7 @@ def main():
         app=QApplication([]);app.setStyle('Fusion');app._foundation_events=m.FoundationEvents(app);app.installEventFilter(app._foundation_events)
         wizard=type('Wizard',(),dict(mode='expert',online=True,profile='mixed'))()
         win=m.AuditDashboard(wizard_result=wizard);win.show()
-        panel=win.prerequisites;owner=m.scan_owner(win);checks=[];captures=[]
+        panel=win.prerequisites;owner=m.scan_owner(win);checks=[];captures=[];keyboard=[];keyboard_errors=[]
         def expect(condition,message):
             if not condition:raise AssertionError(message)
         def until(condition):
@@ -85,24 +86,61 @@ def main():
                 if condition():return
                 QTest.qWait(10)
             raise AssertionError('Fixture completion timeout: '+panel.phase)
-        def idle():until(lambda:panel.phase=='idle' and not panel._workers and owner.token is None)
-        def answer(accepted):
+        def idle():
+            until(lambda:panel.phase=='idle' and not panel._workers and owner.token is None)
+            expect(not keyboard_errors,'; '.join(keyboard_errors))
+        def answer(accepted,key='space',target=None):
             def act():
                 dialog=app.activeModalWidget()
                 if isinstance(dialog,QDialog) and dialog.windowTitle()=='Approve prerequisite installation':
-                    text=dialog.findChild(QTextEdit).toPlainText()
-                    expect('Exact command:' in text and '/usr/bin/sudo' in text,'missing command preview')
-                    expect('Removals: none. Upgrades: none.' in text,'missing effects preview')
-                    expect('not automatically reversible' in text,'misleading reversal claim')
-                    dialog.accept() if accepted else dialog.reject()
+                    try:
+                        content=dialog.findChild(QTextEdit);text=content.toPlainText()
+                        box=dialog.findChild(m.QDialogButtonBox)
+                        yes=box.button(m.QDialogButtonBox.StandardButton.Yes)
+                        no=box.button(m.QDialogButtonBox.StandardButton.No)
+                        expect(dialog.focusWidget() is no,'initial dialog focus is not No')
+                        app.setActiveWindow(dialog);QTest.qWait(1)
+                        expect(no.hasFocus(),'No is not actually focused')
+                        expect(no.isDefault() and not yes.isDefault(),'unsafe active default')
+                        expect(not yes.autoDefault() and not no.autoDefault(),'automatic default promotion enabled')
+                        expect('Exact command:' in text and '/usr/bin/sudo' in text,'missing command preview')
+                        expect('Removals: none. Upgrades: none.' in text,'missing effects preview')
+                        expect('not automatically reversible' in text,'misleading reversal claim')
+                        focus={'yes':yes,'no':no,'content':content}.get(target,yes if accepted else no)
+                        focus.setFocus(Qt.FocusReason.TabFocusReason);app.processEvents()
+                        expect(focus.hasFocus(),'requested keyboard focus unavailable')
+                        expect(no.isDefault() and not yes.isDefault(),'focus promoted Yes to default')
+                        snapshot('installation-approval-dialog',dialog)
+                        keyboard.append(dict(theme=win.theme_combo.currentText(),key=key,target=target or ('yes' if accepted else 'no'),
+                                             default='No',focused=focus.objectName() or focus.__class__.__name__))
+                        if key=='tab':
+                            no.setFocus();seen=[]
+                            for _ in range(4):
+                                QTest.keyClick(app.focusWidget(),Qt.Key.Key_Tab)
+                                seen.append(app.focusWidget())
+                                expect(no.isDefault() and not yes.isDefault(),'Tab changed default')
+                                if app.focusWidget() is no:break
+                            expect(content in seen and yes in seen and no in seen,'preview Tab traversal incomplete')
+                            QTest.keyClick(no,Qt.Key.Key_Tab,Qt.KeyboardModifier.ShiftModifier)
+                            expect(yes.hasFocus(),'reverse Tab did not reach Yes')
+                            QTest.keyClick(yes,Qt.Key.Key_Space if accepted else Qt.Key.Key_Escape)
+                        else:
+                            code={'space':Qt.Key.Key_Space,'return':Qt.Key.Key_Return,
+                                  'enter':Qt.Key.Key_Enter,'escape':Qt.Key.Key_Escape}[key]
+                            QTest.keyClick(focus,code)
+                            if target=='content' and dialog.isVisible():
+                                expect(dialog.result()!=QDialog.DialogCode.Accepted,'content key approved plan')
+                                QTest.keyClick(content,Qt.Key.Key_Escape)
+                    except Exception as exc:
+                        keyboard_errors.append(str(exc));dialog.reject()
                 else:QTimer.singleShot(5,act)
             QTimer.singleShot(5,act)
-        def snapshot(label):
+        def snapshot(label,widget=win):
             if args.screenshots is None:return
             args.screenshots.mkdir(parents=True,exist_ok=True)
             path=args.screenshots/f'{time.strftime("%Y%m%d-%H%M%S")}-{label}-{uuid.uuid4().hex[:8]}.png'
             with path.open('xb'):pass
-            expect(win.grab().save(str(path)),'screenshot save');captures.append(str(path))
+            expect(widget.grab().save(str(path)),'screenshot save');captures.append(str(path))
         try:
             until(lambda:panel.generation > 0)
             idle();win._open_prerequisites();QTest.qWait(50)
@@ -114,18 +152,26 @@ def main():
                 if row['package']=='iproute2':panel.table.item(i,0).setCheckState(Qt.CheckState.Checked)
                 if row['package']=='deborphan':expect(not panel.table.cellWidget(i,6).isEnabled(),'candidate-less install enabled')
             expect(panel.selected_packages()==('iproute2',),'selection not deduplicated')
+            snapshot('prerequisites-checked-selection')
             panel.refresh();idle()
             expect(not panel.selected_packages(),'Refresh selected packages automatically')
             checks.append('startup detection, five table states, unchecked defaults, candidate gate and deduplication passed')
             snapshot('enterprise-prerequisites')
             win.theme_combo.setCurrentText('Hybrid Professional');win._open_prerequisites();QTest.qWait(20);snapshot('hybrid-prerequisites')
+            for theme in ('Enterprise Workspace','Hybrid Professional'):
+                win.theme_combo.setCurrentText(theme);win._open_prerequisites()
+                for key,target in (('return','no'),('enter','no'),('return','yes'),('escape','yes'),
+                                   ('return','content'),('space','content'),('tab','no')):
+                    answer(False,key,target);panel.install(('lynis',));idle()
+                    authorization.assert_not_called();expect(not transactions,'keyboard cancellation dispatched installation')
+            checks.append('runtime No default/focus verified in Enterprise/Hybrid; Enter, keypad Enter, Escape, Space, Tab and content focus passed')
             answer(False);panel.install(('lynis',));idle()
             authorization.assert_not_called();expect(not transactions,'cancelled preview executed')
             answer(True);authorization.return_value=None;panel.install(('lynis',));idle()
             expect(not transactions,'cancelled authentication executed')
             authorization.return_value=b'fixture-password'
             checks.append('preview/credential cancellation never dispatches installation')
-            mode['code']=1;answer(True);panel.install(('lynis',));idle()
+            mode['code']=1;answer(True,'tab');panel.install(('lynis',));idle()
             expect('failed/uncertain' in panel.notice.text(),'failed install reported success')
             expect(not win.sidebar.action_buttons['btn_lynis'].isEnabled(),'failed installation enabled audit')
             mode['code']=0;mode['stale']=True;answer(True);panel.install(('lynis',));idle()
@@ -174,7 +220,7 @@ def main():
             checks.append('targeted pre-scan revalidation skips without starting a scan or sudo')
             expect(not calls,'host command executed')
             expect(win.close(),'idle close failed')
-            evidence=dict(checks=checks,screenshots=captures)
+            evidence=dict(checks=checks,screenshots=captures,keyboard=keyboard)
             if args.screenshots:
                 path=args.screenshots/f'{time.strftime("%Y%m%d-%H%M%S")}-validation-{uuid.uuid4().hex[:8]}.json'
                 with path.open('x') as output:json.dump(evidence,output,indent=2)

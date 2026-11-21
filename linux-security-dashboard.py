@@ -61,6 +61,155 @@ LOG_FILE      = Path.home() / ".audit-dashboard-errors.log"
 CONFIG_FILE   = Path.home() / ".audit-dashboard.conf"
 UNDO_LOG_FILE = Path.home() / ".audit-dashboard-undo.log"
 
+def normalize_privileged_diagnostic(text):
+    """Match all legacy display normalization before a confidentiality decision.
+
+    Suppress ambiguous nested markers instead of permitting a later display pass
+    to reveal new text. No unbounded rewrite loop is used.
+    """
+    pattern = r'\x1b\[[0-?]*[ -/]*[@-~]|\[[\d;]+m'
+    text = re.sub(pattern, '', text)
+    text = re.sub(r'[\x00-\x08\x0b-\x1f\x7f]', '', text)
+    text = re.sub(pattern, '', text)
+    return '' if re.search(pattern, text) else text
+
+
+def sanitize_diagnostic(value, password=None, limit=65536):
+    """Plain-text diagnostic boundary, not a claim to detect arbitrary secrets.
+
+    Redact before truncating, so a truncated credential never escapes redaction.
+    Callers handling assessment data may use limit=None to preserve evidence.
+    """
+    try:
+        text = value.decode(errors='replace') if isinstance(value, bytes) else str(value)
+    except Exception:
+        return '[Diagnostic unavailable]'
+    normalize = normalize_privileged_diagnostic
+    text = normalize(text)
+    secrets = ()
+    if password:
+        secret = password.decode(errors='replace') if isinstance(password, bytes) else str(password)
+        secrets = (secret, normalize(secret))
+    def redact_known(text):
+        for secret in secrets:
+            if secret:
+                text = text.replace(secret, 'REDACTED')
+        return text
+    text = redact_known(text)
+    text = re.sub(r'-----BEGIN [^-]*PRIVATE KEY-----.*?(?:-----END [^-]*PRIVATE KEY-----|\Z)',
+                  '[private key redacted]', text, flags=re.S)
+    # Encoded URLs cannot safely be parsed as normal diagnostic URLs.
+    text = re.sub(r'(?i)https?%3a%2f%2f\S+', '[encoded URL redacted]', text)
+    def url(match):
+        try:
+            parts = urllib.parse.urlsplit(match.group())
+            authority = parts.netloc.rsplit('@', 1)[-1]
+            if '@' in parts.netloc:
+                authority = '[redacted]@' + authority
+            path = re.sub(r'(?i)(/(?:tokens?|api[_-]?keys?|auth|credentials?)/)[^/]*',
+                          r'\1[redacted]', parts.path)
+            return urllib.parse.urlunsplit((parts.scheme, authority, path,
+                                          '[redacted]' if parts.query else '',
+                                          '[redacted]' if parts.fragment else ''))
+        except Exception:
+            return '[URL redacted]'
+    text = re.sub(r'(?i)\b[a-z][a-z0-9+.-]*://[^\s<>"\']+', url, text)
+    text = re.sub(r'(?im)\b(?:proxy-authorization|authorization|set-cookie|cookie)\s*[:=][^\n]*',
+                  '[authentication redacted]', text)
+    text = re.sub(r'(?i)\b(?:bearer|basic)\s+[a-z0-9+/=_~.-]+', '[authentication redacted]', text)
+    key = r'(?:password|passwd|passphrase|pwd|(?:access[ _-]?|refresh[ _-]?)?token|api[ _-]?key|client[ _-]?secret|secret|credentials?|auth(?:entication|orization|[ _-]?(?:token|key))?|(?:aws[ _-]?)?(?:access[ _-]?key(?:[ _-]?id)?|secret[ _-]?access[ _-]?key)|username|login)'
+    text = re.sub(r'(?im)(?<![\w])(?:["\']?' + key + r'["\']?\s*[:=]\s*|--' + key + r'\s+)[^\n]*',
+                  '[sensitive field redacted]', text)
+    text = re.sub(r'\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|AKIA[0-9A-Z]{16})\b',
+                  '[credential redacted]', text)
+    # URL canonicalization and replacement markers can also form a known secret.
+    text = redact_known(text)
+    if limit is not None and len(text) > limit:
+        text = text[:limit] + '\n[Diagnostic truncated]'
+    text = redact_known(text)
+    # A replacement marker can overlap a known secret in surrounding text.
+    # Drop that diagnostic rather than repeatedly rewriting attacker-sized input.
+    return '' if any(secret and secret in text for secret in secrets) else text
+
+
+def privileged_capture(stdout, stderr=b'', password=None, *, complete=True):
+    """Pure joint release policy, separate from process ownership/outcome.
+
+    Only complete captures may escape. Normalize before matching, prepare both
+    channels before release, and quarantine reconstructable known credentials.
+    Arbitrary interleavings and unknown secrets require broader suppression.
+    """
+    denied = dict(allowed=False, stdout='', stderr='',
+                  diagnostic='Privileged capture incomplete or unsafe; captured output discarded.')
+    if not complete:
+        return denied
+    try:
+        left = bytes(stdout).decode(errors='replace') if isinstance(stdout, (bytes, bytearray, memoryview)) else str(stdout)
+        right = bytes(stderr).decode(errors='replace') if isinstance(stderr, (bytes, bytearray, memoryview)) else str(stderr)
+        normalized = normalize_privileged_diagnostic
+        clean_left = sanitize_diagnostic(left, password, limit=None)
+        # Prompt suppression precedes final sanitization, never follows it.
+        prompt_free = '\n'.join(line for line in normalized(right).splitlines()
+                                if not line.lower().startswith('[sudo]') and 'password' not in line.lower())
+        clean_right = sanitize_diagnostic(prompt_free, password, limit=None)
+        if password:
+            secret = password.decode(errors='replace') if isinstance(password, bytes) else str(password)
+            for known in (secret, normalized(secret)):
+                if not known:
+                    continue
+                for a, b, raw in ((left, right, True), (right, left, True),
+                                  (clean_left, clean_right, False), (clean_right, clean_left, False)):
+                    whole_in_part = raw and (known in normalized(a) or known in normalized(b))
+                    if not whole_in_part and any(known in normalized(joined) for joined in
+                                                 (a + b, a.rstrip() + b.lstrip())):
+                        return denied
+                    if not whole_in_part:
+                        # Only the join boundary may lose inserted separators.
+                        # Preserve the credential's significant whitespace: it
+                        # must occur, in order, in the actual boundary run.
+                        na, nb = normalized(a), normalized(b)
+                        body_a, body_b = na.rstrip(), nb.lstrip()
+                        boundary = na[len(body_a):] + nb[:len(nb) - len(body_b)]
+                        for space in re.finditer(r'\s+', known):
+                            if not (body_a.endswith(known[:space.start()]) and
+                                    body_b.startswith(known[space.end():])):
+                                continue
+                            position = 0
+                            for char in space.group():
+                                found = boundary.find(char, position)
+                                if found < 0:
+                                    break
+                                position = found + 1
+                            else:
+                                return denied
+        return dict(allowed=True, stdout=clean_left, stderr=clean_right, diagnostic='')
+    except Exception:
+        return denied  # Exception payloads can themselves contain partial secrets.
+
+
+def diagnostic_exception(exc, password=None):
+    """Unexpected parser/runtime exceptions must not interpolate opaque data."""
+    if isinstance(exc, (ValueError, OSError, subprocess.SubprocessError)):
+        return sanitize_diagnostic(exc, password)
+    return 'Operation failed (' + type(exc).__name__ + '); review non-sensitive diagnostics.'
+
+
+class DiagnosticFilter(logging.Filter):
+    def filter(self, record):
+        try:
+            message = record.getMessage()
+        except Exception:
+            message = '[Diagnostic unavailable]'
+        record.msg = sanitize_diagnostic(message)
+        record.args = ()
+        # Default traceback formatting could append the original secret again.
+        if record.exc_info:
+            kind = record.exc_info[0]
+            record.msg += ' [exception: ' + (kind.__name__ if isinstance(kind, type) else 'unknown') + ']'
+        record.exc_info = record.exc_text = record.stack_info = None
+        return True
+
+
 def init_logging():
     """
     Configure error logging with safe fallbacks.
@@ -72,10 +221,14 @@ def init_logging():
         try:
             candidate.parent.mkdir(parents=True, exist_ok=True)
             logging.basicConfig(filename=str(candidate), level=logging.ERROR, format=fmt, force=True)
+            for handler in logging.getLogger().handlers:
+                handler.addFilter(DiagnosticFilter())
             return candidate
         except OSError:
             continue
     logging.basicConfig(level=logging.ERROR, format=fmt, force=True)
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(DiagnosticFilter())
     return None
 
 # Set up error logging — errors go to a file when possible and never crash startup
@@ -148,12 +301,12 @@ def fs(delta=0):
 THEMES = {
     "Enterprise Workspace": {
         "BG_DARK":"#f5f7fa","BG_MID":"#ffffff","BG_CARD":"#eef2f6",
-        "ACCENT":"#175cd3","WARN":"#854a0e","DANGER":"#b42318","OK":"#146c43",
+        "ACCENT":"#08786f","WARN":"#854a0e","DANGER":"#b42318","OK":"#146c43",
         "TEXT_MAIN":"#172b4d","TEXT_DIM":"#475467","BORDER":"#cbd5e1","SIDEBAR":"#ffffff"
     },
     "Hybrid Professional": {
         "BG_DARK":"#f5f7fa","BG_MID":"#ffffff","BG_CARD":"#eef2f6",
-        "ACCENT":"#175cd3","WARN":"#854a0e","DANGER":"#b42318","OK":"#146c43",
+        "ACCENT":"#08786f","WARN":"#854a0e","DANGER":"#b42318","OK":"#146c43",
         "TEXT_MAIN":"#172b4d","TEXT_DIM":"#475467","BORDER":"#cbd5e1","SIDEBAR":"#172b4d"
     },
     "Dark": {
@@ -182,7 +335,7 @@ THEMES = {
         "TEXT_MAIN":"#ffe0f0","TEXT_DIM":"#cc88aa","BORDER":"#5a2a5a","SIDEBAR":"#1a0a1a"
     },
 }
-UI_METRICS = {"space": 8, "radius": 6, "control_min": 32, "row_min": 44,
+UI_METRICS = {"space": 8, "radius": 8, "control_min": 32, "row_min": 44,
               "risk_width": 160, "actions_width": 280}
 UI_TYPOGRAPHY = {"family": "Sans Serif", "heading_delta": 5, "body_delta": 1}
 T = dict(THEMES["Enterprise Workspace"])
@@ -195,14 +348,19 @@ def apply_theme(name):
     hybrid = name == "Hybrid Professional"
     T.update(NAV_TEXT="#ffffff" if hybrid else T["TEXT_MAIN"],
              NAV_DIM="#d0d5dd" if hybrid else T["TEXT_DIM"],
-             NAV_ACTIVE="#253b5c" if hybrid else T["BG_CARD"],
-             NAV_ACCENT="#b8d4ff" if hybrid else T["ACCENT"],
+             NAV_ACTIVE="#15434b" if hybrid else T["BG_CARD"],
+             NAV_ACCENT="#9df3e6" if hybrid else T["ACCENT"],
              CONTROL_BORDER="#667085" if name in ("Enterprise Workspace", "Hybrid Professional", "Light") else T["TEXT_DIM"],
              PROFESSIONAL=name in ("Enterprise Workspace", "Hybrid Professional"),
              NAV_OK="#8be0b0" if hybrid else T["OK"],
              NAV_WARN="#ffd18a" if hybrid else T["WARN"],
              NAV_DANGER="#ffb4ac" if hybrid else T["DANGER"],
-             SELECTED="#e8f0fe" if name in ("Enterprise Workspace", "Hybrid Professional", "Light") else T["BG_CARD"])
+             SELECTED="#e2f4f1" if name in ("Enterprise Workspace", "Hybrid Professional") else "#e8f0fe" if name == "Light" else T["BG_CARD"])
+    # Adapt the reference's teal emphasis to each existing appearance. These
+    # are paint roles only; selection never grants approval or changes results.
+    T.update(FOCUS=T['ACCENT'], SELECTED_BORDER=T['ACCENT'],
+             HOVER="#f0f8f6" if T['PROFESSIONAL'] else T['BG_CARD'],
+             ACCENT_TEXT="#ffffff" if T['PROFESSIONAL'] else T['BG_DARK'])
 
     if name == "Hacker": T["TEXT_DIM"] = "#89b98d"
     if name == "Solarized": T["TEXT_DIM"] = "#a3b4b7"
@@ -247,23 +405,35 @@ def make_style():
     return f"""
 QWidget {{ color:{T['TEXT_MAIN']}; font-family:'{UI_TYPOGRAPHY['family']}'; font-size:{fs(1)}px; }}
 QMainWindow, QDialog {{ background:{T['BG_DARK']}; }}
+QDialog {{ border:1px solid {T['CONTROL_BORDER']}; }}
+QDialogButtonBox {{ border-top:1px solid {T['BORDER']}; padding-top:8px; }}
 QLabel {{ background:transparent; }}
 QTextEdit, QListWidget, QTableWidget, QLineEdit, QComboBox {{ background:{T['BG_MID']}; color:{T['TEXT_MAIN']}; selection-background-color:{T['SELECTED']}; selection-color:{T['TEXT_MAIN']}; border:1px solid {T['CONTROL_BORDER']}; border-radius:{r}px; }}
 QTextEdit, QListWidget {{ padding:{gap}px; }}
 QLineEdit, QComboBox {{ padding:6px 10px; }}
 QComboBox QAbstractItemView {{ background:{T['BG_MID']}; color:{T['TEXT_MAIN']}; selection-background-color:{T['SELECTED']}; selection-color:{T['TEXT_MAIN']}; }}
 QPushButton {{ background:{T['BG_MID']}; color:{T['TEXT_MAIN']}; border:1px solid {T['CONTROL_BORDER']}; border-radius:{r}px; padding:5px 10px; }}
-QPushButton:hover {{ background:{T['BG_CARD']}; border-color:{T['ACCENT']}; }}
-QPushButton:pressed, QPushButton:checked {{ background:{T['SELECTED']}; color:{T['ACCENT']}; }}
+QPushButton:hover {{ background:{T['HOVER']}; border-color:{T['ACCENT']}; }}
+QPushButton:pressed, QPushButton:checked {{ background:{T['SELECTED']}; color:{T['ACCENT']}; border:2px solid {T['ACCENT']}; padding:4px 9px; font-weight:600; }}
+QPushButton[uiRole="primary"] {{ background:{T['ACCENT']}; color:{T['ACCENT_TEXT']}; border-color:{T['ACCENT']}; font-weight:600; }}
+QPushButton[uiRole="primary"]:hover {{ background:{T['SELECTED']}; color:{T['ACCENT']}; }}
+QPushButton[uiRole="primary"]:pressed {{ background:{T['SELECTED']}; color:{T['ACCENT']}; border:2px solid {T['ACCENT']}; }}
 QPushButton:disabled {{ color:{T['TEXT_DIM']}; border-color:{T['BORDER']}; }}
+QPushButton[uiRole="primary"]:disabled {{ background:{T['BG_CARD']}; color:{T['TEXT_DIM']}; border-color:{T['BORDER']}; }}
 QPushButton#danger {{ color:{T['DANGER']}; border-color:{T['DANGER']}; }}
 QPushButton#warn {{ color:{T['WARN']}; border-color:{T['WARN']}; }}
 QPushButton#ok {{ color:{T['OK']}; border-color:{T['OK']}; }}
 QPushButton#neutral {{ color:{T['TEXT_MAIN']}; }}
-QPushButton:focus, QLineEdit:focus, QComboBox:focus, QListWidget:focus, QTableWidget:focus {{ border:2px solid {T['ACCENT']}; }}
+QPushButton:focus, QLineEdit:focus, QComboBox:focus, QListWidget:focus, QTableWidget:focus {{ border:2px solid {T['FOCUS']}; }}
+QPushButton:focus {{ padding:4px 9px; border-style:dashed; }}
+QPushButton#danger:focus, QPushButton#warn:focus, QPushButton#ok:focus {{ border-color:{T['FOCUS']}; }}
+QPushButton[uiRole="primary"]:focus {{ background:{T['SELECTED']}; color:{T['ACCENT']}; border:2px dashed {T['FOCUS']}; }}
+QPushButton:default {{ border-width:2px; padding:4px 9px; }}
 QTableWidget {{ gridline-color:{T['BORDER']}; alternate-background-color:{T['BG_CARD']}; }}
 QTableWidget::item {{ padding:0px 8px; border-bottom:1px solid {T['BORDER']}; }}
-QTableWidget::item:selected {{ background:{T['SELECTED']}; color:{T['TEXT_MAIN']}; }}
+QTableWidget::item:hover {{ background:{T['HOVER']}; }}
+QTableWidget::item:selected {{ background:{T['SELECTED']}; color:{T['TEXT_MAIN']}; border-bottom:3px solid {T['SELECTED_BORDER']}; font-weight:600; }}
+QTableWidget::indicator {{ width:18px; height:18px; }}
 QHeaderView::section {{ background:{T['BG_CARD']}; color:{T['TEXT_MAIN']}; border:none; border-bottom:1px solid {T['CONTROL_BORDER']}; padding:10px 8px; font-weight:600; }}
 QWidget#toolbar_bar, QWidget#risk_panel_bar, QWidget#workspace_header {{ background:{T['BG_MID']}; border-bottom:1px solid {T['BORDER']}; }}
 QWidget#findings_hdr, QWidget#terminal_hdr {{ background:{T['BG_MID']}; border-bottom:1px solid {T['BORDER']}; }}
@@ -271,7 +441,9 @@ QWidget#sidebar_widget, QWidget#sidebar_info_box, QWidget#sidebar_menu, QWidget#
 QWidget#sidebar_widget QLabel {{ color:{T['NAV_DIM']}; background:transparent; }}
 QPushButton#section_btn {{ background:{T['SIDEBAR']}; color:{T['NAV_TEXT']}; border:none; border-radius:{r}px; padding:10px 12px; text-align:left; font-weight:600; }}
 QPushButton#section_btn:hover, QPushButton#section_btn:checked {{ background:{T['NAV_ACTIVE']}; color:{T['NAV_ACCENT']}; }}
+QPushButton#section_btn:checked {{ border-left:4px solid {T['NAV_ACCENT']}; padding-left:8px; }}
 QPushButton#section_btn:focus {{ border:2px solid {T['NAV_ACCENT']}; }}
+QPushButton#section_btn:checked:focus {{ border:2px solid {T['NAV_ACCENT']}; border-left:4px solid {T['NAV_ACCENT']}; padding-left:8px; }}
 QLabel#heading {{ color:{T['TEXT_MAIN']}; font-size:{fs(3)}px; font-weight:600; padding:8px 0; }}
 QLabel#app_title {{ color:{T['TEXT_MAIN']}; font-size:{fs(3)}px; font-weight:600; }}
 QLabel#section_title {{ color:{T['NAV_TEXT']}; font-weight:600; padding:8px; }}
@@ -288,8 +460,12 @@ QSplitter::handle:hover {{ background:{T['ACCENT']}; }}
 QStatusBar {{ background:{T['BG_MID']}; color:{T['TEXT_DIM']}; border-top:1px solid {T['BORDER']}; padding:5px 8px; }}
 QGroupBox {{ border:1px solid {T['BORDER']}; border-radius:{r}px; margin-top:16px; padding:12px; }}
 QGroupBox::title {{ subcontrol-origin:margin; left:10px; padding:0 4px; color:{T['TEXT_MAIN']}; }}
-QCheckBox, QRadioButton {{ spacing:8px; padding:4px; }}
-QCheckBox:focus, QRadioButton:focus {{ border:1px solid {T['ACCENT']}; }}
+QCheckBox, QRadioButton {{ spacing:8px; padding:3px; border:1px solid transparent; border-radius:{r}px; }}
+QCheckBox:checked, QRadioButton:checked {{ background:{T['SELECTED']}; font-weight:600; border:1px solid {T['SELECTED_BORDER']}; }}
+QCheckBox::indicator, QRadioButton::indicator {{ width:18px; height:18px; }}
+QCheckBox:hover, QRadioButton:hover {{ border-color:{T['CONTROL_BORDER']}; }}
+QCheckBox:focus, QRadioButton:focus {{ border:2px solid {T['FOCUS']}; padding:2px; }}
+QCheckBox:disabled, QRadioButton:disabled {{ color:{T['TEXT_DIM']}; border-color:{T['BORDER']}; }}
 QTabWidget::pane {{ border:1px solid {T['BORDER']}; background:{T['BG_MID']}; }}
 QTabBar::tab {{ background:{T['BG_CARD']}; color:{T['TEXT_MAIN']}; padding:10px 16px; border:1px solid {T['BORDER']}; }}
 QTabBar::tab:selected {{ background:{T['SELECTED']}; color:{T['ACCENT']}; border-bottom:2px solid {T['ACCENT']}; }}
@@ -546,6 +722,133 @@ def prerequisite_rows(distro):
     return rows
 
 
+def executable_trust(path):
+    """Check every traversed directory/link; never execute the discovered file.
+
+    Symlink permission bits are not access controls on Linux (normally 0777).
+    Check their owner and the protected containing directories instead. This
+    pathname walk is not an atomic pin against concurrent privileged changes.
+    """
+    if not path:
+        return False, 'not found'
+    try:
+        raw = os.fspath(path)
+        if not isinstance(raw, str) or '\x00' in raw:
+            return False, 'invalid executable path'
+        if not os.path.isabs(raw):
+            raw = os.getcwd() + '/' + raw
+        # Keep empty/dot components: file/ and file/. require a directory.
+        pending = raw.split('/')[1:]
+        current = Path('/')
+        info = current.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            return False, 'path or parent is not root-controlled'
+        hops = visits = 0
+        while pending:
+            part = pending.pop(0)
+            visits += 1
+            if visits > 4096:
+                return False, 'path traversal limit exceeded'
+            if part in ('', '.'):
+                continue  # The preceding component was required to be a directory.
+            if part == '..':
+                current = current.parent
+                continue
+            location = current / part
+            info = location.lstat()  # Following here would hide intermediate hops.
+            if info.st_uid != 0:
+                return False, 'path or parent is not root-controlled'
+            if stat.S_ISLNK(info.st_mode):
+                hops += 1
+                if hops > 40:
+                    return False, 'symlink traversal limit exceeded'
+                target = os.readlink(location)  # Keep trailing slash and dot markers.
+                if not isinstance(target, str) or not target or '\x00' in target:
+                    return False, 'invalid symlink target'
+                if os.path.isabs(target):
+                    current = Path('/')
+                    pending = target.split('/')[1:] + pending
+                else:
+                    pending = target.split('/') + pending
+                continue
+            if info.st_mode & 0o022:
+                return False, 'path or parent is not root-controlled'
+            if pending and not stat.S_ISDIR(info.st_mode):
+                return False, 'non-directory path component'
+            current = location
+        info = current.lstat()
+        if info.st_uid != 0 or info.st_mode & 0o022:
+            return False, 'path or parent is not root-controlled'
+        if not stat.S_ISREG(info.st_mode) or not info.st_mode & 0o111:
+            return False, 'not a regular executable'
+        return True, 'root-controlled path verified (not a signature or package provenance check)'
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return False, 'path trust could not be verified'
+
+
+PRIVILEGED_PATH = '/usr/sbin:/usr/bin:/sbin:/bin'
+
+
+def command_argv(command):
+    """Copy structured argv; compatibility parsing is for built-in recipes only.
+
+    Never use this to turn history descriptions/free-form undo strings into commands.
+    """
+    argv = shlex.split(command) if isinstance(command, str) else list(command)
+    if not argv or any(type(part) is not str or not part or '\x00' in part for part in argv):
+        raise ValueError('Invalid command arguments')
+    return argv
+
+
+def resolve_privileged_executable(program):
+    """Ignore caller PATH. Check protected system paths immediately before use.
+
+    Every traversed directory and symlink is checked. This is not race-free
+    executable pinning or a signature check.
+    """
+    if not isinstance(program, str) or os.path.basename(program).startswith('-') or not re.fullmatch(r'[a-zA-Z0-9_./+-]+', program):
+        raise ValueError('Invalid privileged executable')
+    directories = PRIVILEGED_PATH.split(':')
+    if '/' in program:
+        if not os.path.isabs(program) or os.path.dirname(program) not in directories or '..' in program.split('/'):
+            raise ValueError('Privileged executable must use a protected system directory')
+        candidates = [program]
+    else:
+        candidates = [directory + '/' + program for directory in directories]
+    for candidate in candidates:
+        if not os.path.lexists(candidate):
+            continue
+        trusted, reason = executable_trust(candidate)
+        if not trusted:
+            raise ValueError('Untrusted privileged executable: ' + reason)
+        return candidate
+    raise FileNotFoundError('Required privileged executable not found in protected system paths')
+
+
+def privileged_invocation(command, password=None):
+    if isinstance(command, str):
+        raise ValueError('Privileged workers require structured argv')
+    argv = command_argv(command)
+    if password is not None and password != b'':
+        if not isinstance(password, bytes) or len(password) > 4096 or any(c in password for c in (b'\n', b'\r', b'\x00')):
+            raise ValueError('Invalid authentication input')
+    argv[0] = resolve_privileged_executable(argv[0])
+    sudo = resolve_privileged_executable('/usr/bin/sudo')
+    env = resolve_privileged_executable('/usr/bin/env')
+    prefix = [sudo, '-S', '-p', ''] if password else [sudo, '-n']
+    return (prefix + ['--', env, '-i', 'PATH=' + PRIVILEGED_PATH, 'HOME=/root', 'LC_ALL=C',
+                      'DEBIAN_FRONTEND=noninteractive', 'DEBIAN_PRIORITY=critical', *argv],
+            {'PATH': PRIVILEGED_PATH, 'LC_ALL': 'C'})
+
+
+def package_transaction(command):
+    # Shell recipes can invoke package managers indirectly. Give them the same
+    # no-forced-termination policy rather than trying to parse shell semantics.
+    return os.path.basename(command[0]) in {
+        'apt', 'apt-get', 'dpkg', 'dpkg-reconfigure', 'dnf', 'yum', 'pacman', 'rpm',
+        'sh', 'bash', 'dash', 'zsh', 'ksh'}
+
+
 def detect_prerequisites():
     """Bounded local discovery only; never executes a scan, sudo or apt update."""
     deadline = time.monotonic() + 12
@@ -566,8 +869,9 @@ def detect_prerequisites():
                 raise ValueError('Distribution could not be identified')
             if not supported:
                 row.update(status='Unsupported', reason='This scan/probe backend is not supported on this distribution; no package manager is installed automatically.')
-            elif shutil.which(executable):
-                row.update(status='Installed', reason='Executable present; scan evidence and service readiness are separate.')
+            elif (located := shutil.which(executable)):
+                trusted, trust_reason = executable_trust(located)
+                row.update(status='Installed', reason='Discovered: ' + located + '. Trust: ' + trust_reason + '. Scan evidence and service readiness are separate.')
             else:
                 row.update(status='Missing', reason='Required executable not found.')
                 if distro == 'ubuntu' and package in PREREQUISITE_INSTALL_RELEASES.get(release, ()):
@@ -660,20 +964,34 @@ def prerequisite_apt_argv(packages, simulate=False):
 
 def parse_prerequisite_simulation(text):
     installs, configurations = [], []
-    for line in text.splitlines():
-        if line.startswith('Remv ') or line.startswith('Purg '):
+    sections = {'The following additional packages will be installed:',
+                'The following NEW packages will be installed:', 'Suggested packages:',
+                'Recommended packages:',
+                'The following packages were automatically installed and are no longer required:'}
+    in_package_list = False
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith(('Remv ', 'Purg ')):
             raise ValueError('Package removal rejected')
-        if line.startswith('Inst '):
-            # [old-version] denotes an upgrade/reinstallation, never a missing dependency.
-            match = re.fullmatch(r'Inst ([a-z0-9][a-z0-9+.:\-]*) \(([^\s()]+) [^\n]*\)', line)
-            if not match or '[' in line.split('(', 1)[0]:
-                raise ValueError('Upgrades or unrecognized APT changes rejected')
-            installs.append((match[1], match[2]))
-        elif line.startswith('Conf '):
-            match = re.fullmatch(r'Conf ([a-z0-9][a-z0-9+.:\-]*) \(([^\s()]+) [^\n]*\)', line)
+        if line.startswith(('Inst ', 'Conf ')):
+            in_package_list = False
+            match = re.fullmatch(r'(Inst|Conf) ([a-z0-9][a-z0-9+.:\-]*) \(([^\s()]+) [^\n]*\)', line)
             if not match:
-                raise ValueError('Unrecognized APT configuration plan')
-            configurations.append((match[1], match[2]))
+                raise ValueError('Upgrade or unrecognized APT transaction action rejected')
+            (installs if match[1] == 'Inst' else configurations).append((match[2], match[3]))
+        elif line in sections:
+            in_package_list = True
+        elif in_package_list and raw[:1].isspace() and re.fullmatch(r'[a-z0-9][a-z0-9+.:\-]*(?:\s+[a-z0-9][a-z0-9+.:\-]*)*', line):
+            continue
+        elif (re.fullmatch(r'Reading package lists\.\.\.(?: Done)?|Building dependency tree\.\.\.(?: Done)?|Reading state information\.\.\.(?: Done)?', line)
+              or re.fullmatch(r'0 upgraded, \d+ newly installed, 0 to remove and \d+ not upgraded\.', line)
+              or re.fullmatch(r'Need to get [0-9., /A-Za-z]+ of archives\.|After this operation, [0-9., A-Za-z]+ of additional disk space will be used\.', line)
+              or line == "Use 'sudo apt autoremove' to remove them."):
+            in_package_list = False
+        else:
+            raise ValueError('Unknown APT simulation output/action rejected; raw line omitted')
     if any(pair not in installs for pair in configurations):
         raise ValueError('Unrelated package configuration rejected')
     if not installs or len(installs) > 256 or len(set(n for n, v in installs)) != len(installs):
@@ -689,8 +1007,7 @@ def build_prerequisite_plan(packages):
     if not packages or any(type(p) is not str or p not in allowed for p in packages):
         raise ValueError('Package not allowlisted for this Ubuntu release')
     for executable in ('/usr/bin/apt-get', '/usr/bin/apt-cache', '/usr/bin/sudo', '/usr/bin/env'):
-        st = Path(executable).stat()
-        if st.st_uid != 0 or st.st_mode & 0o022 or not stat.S_ISREG(st.st_mode):
+        if not executable_trust(executable)[0]:
             raise ValueError('Untrusted package-management executable')
     deadline = time.monotonic() + 15
     state = prerequisite_apt_state()
@@ -733,9 +1050,7 @@ def verify_prerequisite_plan(plan):
 
 
 def prerequisite_redact(text, password=None):
-    if password:
-        text = text.replace(password.decode(errors='replace'), '[redacted]')
-    return re.sub(r'://[^\s/@]+@', '://[redacted]@', text)
+    return sanitize_diagnostic(text, password)
 
 
 def prerequisite_gate(terminal, key, on_terminal=None, on_failed=None, executable=None):
@@ -1085,10 +1400,9 @@ def check_sudo_cached():
     """Check if sudo credentials are already cached (so commands won't hang).
     Returns True if sudo will work without a password prompt right now."""
     try:
-        result = subprocess.run(
-            ["sudo", "-n", "true"],
-            capture_output=True, timeout=3
-        )
+        argv, child_env = privileged_invocation(["true"])
+        result = subprocess.run(argv, stdin=subprocess.DEVNULL, env=child_env,
+                                capture_output=True, timeout=3)
         return result.returncode == 0
     except Exception:
         return False
@@ -1123,9 +1437,9 @@ def create_timeshift_snapshot(password, comment, terminal, timeout=600):
         T["ACCENT"],
     )
     try:
+        argv, child_env = privileged_invocation(["timeshift", "--create", "--comments", comment, "--tags", "D"], password)
         r = subprocess.run(
-            ["sudo", "-S", "timeshift", "--create",
-             "--comments", comment, "--tags", "D"],
+            argv, env=child_env,
             input=password + b"\n",
             capture_output=True,
             timeout=timeout,
@@ -1136,11 +1450,14 @@ def create_timeshift_snapshot(password, comment, terminal, timeout=600):
         )
         return False
     except Exception as e:
-        terminal.append_err(f"Timeshift error: {e}")
+        terminal.append_err("Timeshift failed; captured output discarded.")
         return False
 
-    out = (r.stdout or b"").decode(errors="replace")
-    err = (r.stderr or b"").decode(errors="replace")
+    capture = privileged_capture(r.stdout or b'', r.stderr or b'', password)
+    if not capture['allowed']:
+        terminal.append_err(capture['diagnostic'])
+        return False
+    out, err = capture['stdout'], capture['stderr']
     if r.returncode == 0:
         terminal.append_ok("Timeshift snapshot created successfully.")
         return True
@@ -1234,6 +1551,30 @@ def get_system_info():
         pass
 
     return info
+
+def safe_confirmation_buttons(buttons, decline):
+    """Enter declines even after focus moves; Space/click explicitly approves.
+
+    Qt autoDefault can promote a focused affirmative button despite an earlier
+    setDefault(No). Disable that promotion on every button, then establish the
+    sole default and initial focus. This does not change button roles/signals.
+    """
+    for button in buttons:
+        button.setAutoDefault(False)
+        button.setDefault(False)
+    decline.setDefault(True)
+    decline.setFocus(Qt.FocusReason.OtherFocusReason)
+
+
+def privileged_question(parent, title, text):
+    """Yes/No confirmation with a persistent No default and Escape action."""
+    box = QMessageBox(QMessageBox.Icon.Question, title, text,
+                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, parent)
+    box.setDefaultButton(QMessageBox.StandardButton.No)
+    box.setEscapeButton(QMessageBox.StandardButton.No)
+    safe_confirmation_buttons(box.buttons(), box.button(QMessageBox.StandardButton.No))
+    return box.exec()
+
 
 def prompt_for_sudo_password(parent, reason_text, terminal=None, force_prompt=False):
     """Prompt the user for their sudo password via a GUI dialog.
@@ -2203,53 +2544,40 @@ class CommandWorker(QThread):
     def run(self):
         """This runs in a background thread — never touch the GUI from here."""
         try:
-            # Force DEBIAN_FRONTEND=noninteractive for every sudo command so
-            # apt/dpkg never try to open a TTY for debconf prompts — we have
-            # no TTY available (stdin is the sudo password pipe or DEVNULL).
-            # We inject via the `env` command rather than sudo -E because
-            # sudoers' env_reset policy would otherwise strip these vars
-            # before the child process sees them.
-            noninteractive_prefix = [
-                "env",
-                "DEBIAN_FRONTEND=noninteractive",
-                "DEBIAN_PRIORITY=critical",
-            ]
-
-            if self.sudo and self.password:
-                # Pass password via stdin with sudo -S.
-                full = ["sudo", "-S"] + noninteractive_prefix + self.cmd
-                p = subprocess.run(
-                    full,
-                    input=self.password + b"\n",
-                    capture_output=True,
-                    timeout=self.timeout,
-                    env=self.env,
-                )
+            if self.sudo:
+                # Validate before dispatch; package/shell transactions retain their
+                # native worker and process ownership until natural completion.
+                if package_transaction(self.cmd):
+                    result = run_package_transaction(self.cmd, self.password, self.output_ready.emit)
+                    if result['output']:
+                        self.output_ready.emit(result['output'])
+                    if result['code'] != 0 or result['error']:
+                        self.error_ready.emit(result['error'] or f"Command failed with exit code {result['code']}.")
+                        self.failure_reason = "exception" if result['error'] else "nonzero_exit"
+                        self.failed.emit()
+                    else:
+                        self.finished_ok.emit()
+                    return
+                full, child_env = privileged_invocation(self.cmd, self.password)
             else:
-                # No password — use DEVNULL for stdin so sudo cannot block waiting
-                # for a password on the parent terminal. If credentials are not
-                # cached, sudo will fail immediately with a clear error message
-                # rather than hanging silently in the background.
-                if self.sudo:
-                    full = ["sudo"] + noninteractive_prefix + self.cmd
-                else:
-                    full = self.cmd
-                p = subprocess.run(
-                    full,
-                    stdin=subprocess.DEVNULL,
-                    capture_output=True,
-                    timeout=self.timeout,
-                    env=self.env,
-                )
-            # Decode output — ignore encoding errors in case of binary output
-            stdout = p.stdout.decode("utf-8", errors="replace") if p.stdout else ""
-            stderr = p.stderr.decode("utf-8", errors="replace") if p.stderr else ""
-            # Strip the sudo "Password:" prompt from stderr so it doesn't show in terminal
-            if self.password and stderr:
-                stderr = "\n".join(
-                    l for l in stderr.splitlines()
-                    if not l.lower().startswith("[sudo]") and "password" not in l.lower()
-                )
+                full, child_env = command_argv(self.cmd), self.env
+            options = dict(capture_output=True, timeout=self.timeout, env=child_env)
+            if self.sudo and self.password:
+                options['input'] = self.password + b"\n"
+            else:
+                options['stdin'] = subprocess.DEVNULL
+            p = subprocess.run(full, **options)
+            if self.sudo:
+                capture = privileged_capture(p.stdout or b'', p.stderr or b'', self.password)
+                if not capture['allowed']:
+                    self.error_ready.emit(capture['diagnostic'])
+                    self.failure_reason = "unsafe_capture"
+                    self.failed.emit()
+                    return
+                stdout, stderr = capture['stdout'], capture['stderr']
+            else:
+                stdout = sanitize_diagnostic(p.stdout or b'', limit=None)
+                stderr = sanitize_diagnostic(p.stderr or b'', limit=None)
             # Emit output to the main thread for display
             if stdout: self.output_ready.emit(stdout)
             # Only treat stderr as an error if the command actually failed.
@@ -2279,8 +2607,9 @@ class CommandWorker(QThread):
             self.failed.emit()
 
         except Exception as e:
-            logging.error(f"CommandWorker error: {e}")
-            self.error_ready.emit(str(e))
+            message = ("Privileged command failed; captured output discarded." if self.sudo else diagnostic_exception(e))
+            logging.error("CommandWorker error: %s", message)
+            self.error_ready.emit(message)
             self.failure_reason = "exception"
             self.failed.emit()
 
@@ -2317,7 +2646,10 @@ class StreamingCommandWorker(QThread):
             self.failure_reason = "output_limit"
             raise ValueError("Streaming preview exceeded 4096 updates; evidence is incomplete")
         self._progress_updates += 1
-        self.output_ready.emit(text)
+        # Privileged output may contain a credential split across live chunks.
+        # Show fixed progress until the bounded complete capture is sanitized.
+        self.output_ready.emit('Privileged scan output received; incomplete captures will be discarded.'
+                               if self.sudo else sanitize_diagnostic(text, limit=None))
 
     def _collect_output(self, proc, input_bytes, deadline):
         """Drain both streams, including inherited pipes, under one deadline."""
@@ -2384,24 +2716,34 @@ class StreamingCommandWorker(QThread):
 
     def _cleanup_child(self, proc):
         """Bounded direct-child cleanup. Never signal a group or use sudo."""
+        cleanup_ok = True
         try:
             if proc.poll() is None:
                 try:
                     proc.terminate()
                 except Exception as exc:
-                    self.error_ready.emit(f"Direct child terminate attempt failed: {exc}")
+                    cleanup_ok = False
+                    self.error_ready.emit("Direct child terminate attempt failed." if self.sudo else
+                                          "Direct child terminate attempt failed: " + diagnostic_exception(exc, self.password))
             try:
                 proc.wait(timeout=self.CLEANUP_WAIT)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=self.CLEANUP_WAIT)
             self.direct_child_reaped = True
+            return cleanup_ok
         except Exception as exc:
-            self.error_ready.emit(f"Direct child termination/reaping unconfirmed: {exc}")
+            self.error_ready.emit("Direct child termination/reaping unconfirmed." if self.sudo else
+                                  "Direct child termination/reaping unconfirmed: " + diagnostic_exception(exc, self.password))
+            return False
 
     def run(self):
         succeeded = False
         proc = None
+        collection_complete = False
+        cleanup_complete = True
+        returncode = None
+        private_failure = 'Privileged scan failed or output incomplete; captured output discarded.'
         self.failure_reason = "exception"
         self.full_output = ""
         self.output_truncated = False
@@ -2411,37 +2753,50 @@ class StreamingCommandWorker(QThread):
         try:
             if self.timeout <= 0 or not self.timeout < float("inf"):
                 raise ValueError("Streaming timeout must be finite and positive")
+            if self.sudo and package_transaction(self.cmd):
+                raise ValueError('Package/configuration transactions require the no-termination command worker')
+            full, child_env = privileged_invocation(self.cmd, self.password) if self.sudo else (command_argv(self.cmd), None)
             input_bytes = self.password + b"\n" if self.sudo and self.password else None
-            full = (["sudo", "-S"] if input_bytes else ["sudo"]) + self.cmd if self.sudo else self.cmd
             # Start before Popen so creation time counts. Popen itself cannot be
             # interrupted safely here; see documented OS/process-creation limit.
             deadline = time.monotonic() + self.timeout
             proc = subprocess.Popen(full, stdin=subprocess.PIPE if input_bytes else subprocess.DEVNULL,
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0, env=child_env)
             returncode = self._collect_output(proc, input_bytes, deadline)
+            if self.output_truncated:
+                self.failure_reason = "output_limit"
+                raise ValueError("Streaming evidence is truncated/incomplete")
+            collection_complete = True
             self.direct_child_reaped = True
             if returncode != 0:
                 self.failure_reason = "nonzero_exit"
-                stderr = self._captured["stderr"].decode("utf-8", errors="replace")
-                stderr = "\n".join(line for line in stderr.splitlines()
-                                   if not line.lower().startswith("[sudo]") and "password" not in line.lower())
-                self.error_ready.emit(stderr or f"Command failed with exit code {returncode}.")
+                if not self.sudo:
+                    stderr = sanitize_diagnostic(self._captured["stderr"].decode("utf-8", errors="replace"), self.password, limit=None)
+                    stderr = "\n".join(line for line in stderr.splitlines()
+                                       if not line.lower().startswith("[sudo]") and "password" not in line.lower())
+                    self.error_ready.emit(stderr or f"Command failed with exit code {returncode}.")
             else:
                 self.failure_reason = None
                 succeeded = True
         except subprocess.TimeoutExpired:
+            collection_complete = False
             self.failure_reason = "timeout"
             self.error_ready.emit(f"Command timed out after {self.timeout} seconds; assessment incomplete/unknown.")
         except FileNotFoundError:
+            collection_complete = False
             self.failure_reason = "missing_executable"
-            self.error_ready.emit(f"Command not found: {self.cmd[0]}")
+            self.error_ready.emit("Privileged executable unavailable." if self.sudo else f"Command not found: {self.cmd[0]}")
         except Exception as exc:
-            logging.error(f"StreamingCommandWorker error: {exc}")
-            self.error_ready.emit(str(exc))
+            collection_complete = False
+            # An exception can contain the same cut-off credential as stdout.
+            message = private_failure if self.sudo else diagnostic_exception(exc, self.password)
+            logging.error("StreamingCommandWorker error: %s", message)
+            if not self.sudo:
+                self.error_ready.emit(message)
         finally:
             if proc is not None:
                 if not succeeded:
-                    self._cleanup_child(proc)
+                    cleanup_complete = self._cleanup_child(proc)
                     self.error_ready.emit(
                         ("Direct child reaped. " if self.direct_child_reaped else "Direct child state uncertain. ")
                         + "Descendant state is not verified; do not retry automatically.")
@@ -2451,9 +2806,39 @@ class StreamingCommandWorker(QThread):
                             stream.close()
                         except Exception as exc:
                             succeeded = False
+                            collection_complete = False
+                            cleanup_complete = False
                             self.failure_reason = self.failure_reason or "exception"
-                            self.error_ready.emit(f"Pipe cleanup failed: {exc}")
-            self.full_output = self._captured["stdout"].decode("utf-8", errors="replace")
+                            self.error_ready.emit("Pipe cleanup failed; captured output discarded." if self.sudo else
+                                                  "Pipe cleanup failed: " + diagnostic_exception(exc, self.password))
+            release_capture = collection_complete and cleanup_complete and not self.output_truncated
+            if self.sudo:
+                if release_capture:
+                    try:
+                        capture = privileged_capture(self._captured["stdout"], self._captured["stderr"], self.password)
+                        release_capture = capture['allowed']
+                        stdout, stderr = capture['stdout'], capture['stderr']
+                        if not release_capture:
+                            self.failure_reason = "credential_disclosure"
+                            private_failure = capture['diagnostic']
+                    except Exception:
+                        release_capture = False
+                        self.failure_reason = "exception"
+                self._captured.clear()
+                if release_capture:
+                    self.full_output = stdout
+                    if stdout:
+                        self.output_ready.emit(stdout)
+                    if returncode != 0:
+                        self.error_ready.emit(stderr or f"Command failed with exit code {returncode}.")
+                else:
+                    # Partial credentials cannot safely be sanitized in isolation.
+                    self.full_output = ""
+                    succeeded = False
+                    self.failure_reason = self.failure_reason or "exception"
+                    self.error_ready.emit(private_failure)
+            else:
+                self.full_output = sanitize_diagnostic(self._captured["stdout"].decode("utf-8", errors="replace"), self.password, limit=None)
             self._captured.clear()
             if succeeded:
                 self.finished_ok.emit()
@@ -2898,7 +3283,7 @@ class PrerequisiteJob(QThread):
         try:
             self.value = self.function()
         except Exception as exc:
-            self.error = str(exc)
+            self.error = diagnostic_exception(exc)
         finally:
             self.function = None  # Drop any credential-bearing closure.
 
@@ -2910,23 +3295,34 @@ def execute_prerequisite_plan(approved, password, progress):
         raise ValueError('Installation plan changed; refresh and approve a new preview')
     if not isinstance(password, bytes) or not 0 < len(password) <= 4096:
         raise ValueError('Explicit installation authentication required')
-    argv = ['/usr/bin/sudo', '-S', '-p', '', '/usr/bin/env', '-i',
-            'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'HOME=/root', 'LC_ALL=C',
-            'DEBIAN_FRONTEND=noninteractive', 'DEBIAN_PRIORITY=critical', *fresh['command']]
+    return run_package_transaction(fresh['command'], password, progress)
+
+
+def run_package_transaction(command, password, progress):
+    """Retain the direct transaction to natural exit, including I/O failures.
+
+    No cancellation, execution timeout, kill or terminate. Shutdown stays pending.
+    Privileged shell recipes use this policy too; their duration is unbounded.
+    """
+    argv, child_env = privileged_invocation(command, password)
     # Popen/owned draining replaces subprocess.run: run() kills its child on timeout
     # or communication failure. That behaviour must never be used for apt/dpkg here.
     retained, updates = bytearray(), 0
-    pending = memoryview(password + b'\n')
+    stdout_eof, overflow = False, False
+    pending = memoryview(password + b'\n') if password else memoryview(b'')
     selector, error, exited_at = None, None, None
-    process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                               stderr=subprocess.STDOUT, bufsize=0,
-                               env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'})
+    try:
+        process = subprocess.Popen(argv, stdin=subprocess.PIPE if password else subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, bufsize=0, env=child_env)
+    except Exception:
+        raise RuntimeError('Package process startup failed; captured output discarded.') from None
     try:
         selector = selectors.DefaultSelector()
         os.set_blocking(process.stdout.fileno(), False)
-        os.set_blocking(process.stdin.fileno(), False)
         selector.register(process.stdout, selectors.EVENT_READ)
-        selector.register(process.stdin, selectors.EVENT_WRITE)
+        if process.stdin is not None:
+            os.set_blocking(process.stdin.fileno(), False)
+            selector.register(process.stdin, selectors.EVENT_WRITE)
         while selector.get_map():
             if process.poll() is not None:
                 exited_at = exited_at or time.monotonic()
@@ -2945,16 +3341,20 @@ def execute_prerequisite_plan(approved, password, progress):
                 else:
                     chunk = os.read(process.stdout.fileno(), 4096)
                     if not chunk:
+                        stdout_eof = True
                         selector.unregister(process.stdout)
                     else:
+                        if len(chunk) > 2 * 1024 * 1024 - len(retained):
+                            overflow = True
                         if len(retained) < 2 * 1024 * 1024:
                             retained.extend(chunk[:2 * 1024 * 1024 - len(retained)])
                         if updates < 1024:
-                            progress('APT transaction output received; configuration remains active. Detailed output is redacted after completion.')
+                            progress('Package/configuration transaction active; closing waits. Detailed output is redacted after completion.')
                             updates += 1
         code = process.wait()  # Native worker stays owned; no GUI-thread wait.
     except BaseException as exc:
-        error = str(exc)
+        error = 'Package capture failed (' + type(exc).__name__ + '); captured output discarded.'
+        retained.clear()
         # Never abandon or signal an active package manager. Drain/discard output
         # until its direct parent exits, even after a logging/selector failure.
         try:
@@ -2966,20 +3366,32 @@ def execute_prerequisite_plan(approved, password, progress):
                 os.set_blocking(process.stdout.fileno(), False)
                 os.read(process.stdout.fileno(), 4096)
             except Exception:
-                time.sleep(.05)
+                pass
+            # EOF is immediately readable too: pace every recovery iteration,
+            # not only errors, while retaining the active transaction.
+            time.sleep(.05)
         code = process.wait()
     finally:
         if selector is not None:
-            selector.close()
+            try:
+                selector.close()
+            except Exception as exc:
+                error = error or 'Package capture cleanup failed; captured output discarded.'
         for stream in (process.stdin, process.stdout):
-            if not stream.closed:
-                stream.close()
+            if stream is not None and not stream.closed:
+                try:
+                    stream.close()
+                except Exception as exc:
+                    error = error or 'Package capture cleanup failed; captured output discarded.'
         pending = None
-    text = retained.decode(errors='replace')
-    if len(retained) == 2 * 1024 * 1024:
-        text = text.rsplit('\n', 1)[0] if '\n' in text else '[Oversized output omitted]'
-    return dict(code=code, error=error, output=prerequisite_redact(text, password),
-                note='Output is bounded; package/executable validation, not log text, determines availability.')
+    capture_complete = stdout_eof and not overflow and error is None
+    capture = privileged_capture(bytes(retained), password=password, complete=capture_complete)
+    retained.clear()
+    if not capture['allowed']:
+        error = error or capture['diagnostic']
+    return dict(code=code, error=error, output=capture['stdout'],
+                capture_complete=capture_complete, diagnostics_allowed=capture['allowed'],
+                note='Process exit and diagnostic completeness are separate; no automatic retry.')
 
 
 class PrerequisitesPanel(QWidget, WorkerMixin):
@@ -3015,6 +3427,7 @@ class PrerequisitesPanel(QWidget, WorkerMixin):
         buttons = QHBoxLayout()
         self.refresh_button = QPushButton('Refresh')
         self.install_button = QPushButton('Install Selected')
+        self.install_button.setProperty('uiRole', 'primary')
         self.install_button.setEnabled(False)
         self.refresh_button.clicked.connect(self.refresh)
         self.install_button.clicked.connect(lambda: self.install(self.selected_packages()))
@@ -3032,6 +3445,7 @@ class PrerequisitesPanel(QWidget, WorkerMixin):
         self.install_button.setEnabled(self.phase == 'idle' and bool(self.selected_packages()))
 
     def _render(self, rows):
+        rows = [dict(row, reason=sanitize_diagnostic(row['reason'])) for row in rows]
         self.rows = rows
         self.table.blockSignals(True)
         self.table.setRowCount(len(rows))
@@ -3082,6 +3496,7 @@ class PrerequisitesPanel(QWidget, WorkerMixin):
             handled = True
             record = getattr(worker, '_scan_record', None)
             error = worker.error or (record and record['error'])
+            error = sanitize_diagnostic(error) if error else None
             lease = None
             if record is not None:
                 lease = record['owner'].enter('Prerequisite continuation', record['token'])
@@ -3091,7 +3506,7 @@ class PrerequisitesPanel(QWidget, WorkerMixin):
                 complete(worker.value, error)
             except Exception as exc:
                 self.phase = 'idle'
-                self.notice.setText('Prerequisite operation failed: ' + str(exc))
+                self.notice.setText('Prerequisite operation failed: ' + diagnostic_exception(exc))
             finally:
                 if lease is not None:
                     record['owner'].leave(lease)
@@ -3105,9 +3520,9 @@ class PrerequisitesPanel(QWidget, WorkerMixin):
             except RuntimeError:
                 dispatched = handled
             if dispatched:
-                worker.error = str(exc)
+                worker.error = diagnostic_exception(exc)
                 if record:
-                    record['error'] = str(exc)
+                    record['error'] = diagnostic_exception(exc)
             elif not handled:
                 handled = True
                 if not getattr(worker, '_start_cleanup_done', False):
@@ -3115,7 +3530,7 @@ class PrerequisitesPanel(QWidget, WorkerMixin):
                     if record:
                         record['owner'].retire(worker)
                     worker.deleteLater()
-                complete(None, str(exc))
+                complete(None, diagnostic_exception(exc))
         return worker
 
     def refresh(self):
@@ -3159,7 +3574,7 @@ class PrerequisitesPanel(QWidget, WorkerMixin):
         self.notice.setText('Building a read-only package plan. No elevation yet.')
         def failed(message):
             self.phase = 'idle'
-            self.notice.setText(message)
+            self.notice.setText(sanitize_diagnostic(message))
             self._selection_changed(None)
         def preview(plan, error):
             if error:
@@ -3169,9 +3584,7 @@ class PrerequisitesPanel(QWidget, WorkerMixin):
                 failed('Shutdown pending; installation approval was not requested.')
                 return
             effects = '\n'.join(PREREQUISITE_EFFECTS.get(p, '') for p in selected)
-            command = ['/usr/bin/sudo', '-S', '-p', '', '/usr/bin/env', '-i',
-                       'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'HOME=/root', 'LC_ALL=C',
-                       'DEBIAN_FRONTEND=noninteractive', 'DEBIAN_PRIORITY=critical', *plan['command']]
+            command, _ = privileged_invocation(plan['command'], b'preview-only')
             text = ('Requested: ' + ', '.join(p + '=' + v for p, v in plan['requested']) +
                     '\nResolved new packages (including dependencies):\n' + '\n'.join(p + '=' + v for p, v in plan['resolved']) +
                     '\nRemovals: none. Upgrades: none.\n\n' + effects +
@@ -3186,13 +3599,14 @@ class PrerequisitesPanel(QWidget, WorkerMixin):
             preview_layout.addWidget(QLabel('Review exact packages, commands and side effects. No is the safe default.'))
             content = QTextEdit()
             content.setReadOnly(True)
+            content.setTabChangesFocus(True)
             content.setPlainText(text)
             preview_layout.addWidget(content)
             buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No)
-            buttons.button(QDialogButtonBox.StandardButton.No).setDefault(True)
             buttons.accepted.connect(dialog.accept)
             buttons.rejected.connect(dialog.reject)
             preview_layout.addWidget(buttons)
+            safe_confirmation_buttons(buttons.buttons(), buttons.button(QDialogButtonBox.StandardButton.No))
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 failed('Installation cancelled before elevation; no packages were changed.')
                 return
@@ -3211,23 +3625,23 @@ class PrerequisitesPanel(QWidget, WorkerMixin):
             def installed(value, install_error):
                 self.phase = 'verifying'
                 if value and value.get('output'):
-                    self.terminal.append(value['output'])
+                    self.terminal.append(sanitize_diagnostic(value['output']))
                 valid = type(value) is dict and type(value.get('code')) is int
                 outcome = install_error or ('Installation outcome unknown' if not valid else
                           value['error'] or ('APT exited with code ' + str(value['code']) if value['code'] else ''))
                 def verified(result, verify_error):
                     self.phase = 'idle'
                     if verify_error:
-                        self.notice.setText('Installation outcome could not be verified: ' + verify_error)
+                        self.notice.setText('Installation outcome could not be verified: ' + sanitize_diagnostic(verify_error))
                         self._render([dict(row, status='Could Not Verify', reason=verify_error, candidate=None, installable=False)
                                       if row['package'] in selected else row for row in self.rows])
                         return
                     self._render(result['rows'])
                     missing = [name for name, verified_package in result['packages'].items() if not verified_package]
                     missing += [r['executable'] for r in result['rows'] if r['package'] in selected and r['status'] != 'Installed']
-                    self.notice.setText(('Installation failed/uncertain: ' + outcome if outcome else
+                    self.notice.setText(sanitize_diagnostic(('Installation failed/uncertain: ' + outcome if outcome else
                                          'Installation completed; dependency validation ' + ('incomplete: ' + ', '.join(missing) if missing else 'passed.')) +
-                                        ' No scan was started. Package installation is not automatically reversible.')
+                                        ' No scan was started. Package installation is not automatically reversible.'))
                     self.terminal.append_info(self.notice.text())
                 self._launch(lambda: verify_prerequisite_plan(plan), verified, generation)
             self._launch(transaction, installed, generation)
@@ -3328,7 +3742,7 @@ class TerminalPanel(QWidget, WorkerMixin):
     def append(self, text, colour=None, role=None):
         """Append a line of text to the terminal output.
         colour is an optional hex colour string e.g. '#ff4444'"""
-        text = strip_ansi(text)
+        text = sanitize_diagnostic(text, limit=None)
         if not text.strip():
             return  # Skip blank lines
         cur = self.output.textCursor()
@@ -3534,6 +3948,7 @@ class PreActionDialog(QDialog):
         cmd_box = QTextEdit()
         cmd_box.setPlainText(f"sudo {cmd}")
         cmd_box.setReadOnly(True)
+        cmd_box.setTabChangesFocus(True)
         cmd_box.setMaximumHeight(50)
         # Amber border so the command really stands out
         set_theme_style(cmd_box, lambda : f"background:{T['BG_DARK']};color:{T['ACCENT']};border:2px solid {T['WARN']};border-radius:4px;font-size:{fs()}px;")
@@ -3592,6 +4007,8 @@ class PreActionDialog(QDialog):
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
+
+        safe_confirmation_buttons(btns.buttons(), btns.button(QDialogButtonBox.StandardButton.Cancel))
 
 
 # ── Everyday Language explanation database ───────────────────────────────────────
@@ -4290,6 +4707,8 @@ class FindingsTable(QWidget, WorkerMixin):
         """Run an action (remove/disable) after showing the confirmation dialog.
         Prompts for sudo password via a GUI dialog if credentials are not cached."""
 
+        argv = command_argv(cmd)
+        cmd = shlex.join(argv)
         sudo_password = prompt_for_sudo_password(
             self,
             "This action requires your sudo (administrator) password.",
@@ -4341,10 +4760,10 @@ class FindingsTable(QWidget, WorkerMixin):
         }
 
         # Run the command in a background thread
-        w = CommandWorker(cmd.split(), sudo=True, password=sudo_password)
+        w = CommandWorker(argv, sudo=True, password=sudo_password)
         w.output_ready.connect(scan_slot(self, w, lambda t: self.terminal.append(t, T["OK"]), success=False, once=False))
         w.error_ready.connect(scan_slot(self, w, self.terminal.append_err, success=False, once=False))
-        w.finished_ok.connect(scan_slot(self, w, lambda: self._verify(cmd, name, risk, entry), success=True, once=True))
+        w.finished_ok.connect(scan_slot(self, w, lambda: self._verify(argv, name, risk, entry), success=True, once=True))
         self._start_worker(w)
 
     def _verify(self, cmd, name, risk, entry):
@@ -4352,10 +4771,11 @@ class FindingsTable(QWidget, WorkerMixin):
         - Remove the finding row from the table
         - Remove the risk entry (score updates live)
         - Add to the undo log"""
-        pkg = cmd.split()[-1]
+        argv = command_argv(cmd)
+        pkg = argv[-1]
         success = False
 
-        if valid_pkg(pkg) and ("purge" in cmd or "remove" in cmd):
+        if valid_pkg(pkg) and ("purge" in argv or "remove" in argv):
             # For removals, check the package is actually gone
             still_installed = pkg_installed(pkg)
             if not still_installed:
@@ -4904,14 +5324,20 @@ def run_drive_health_check(terminal, findings, parent_widget):
     for i, dev in enumerate(drives, start=1):
         prefix = f"[{i}/{total}] {dev}"
         try:
+            argv, child_env = privileged_invocation(["smartctl", "-H", dev], pw)
             r = subprocess.run(
-                ["sudo", "-S", "smartctl", "-H", dev],
+                argv, env=child_env,
                 input=pw + b"\n",
                 capture_output=True, timeout=15,
             )
-            out = (r.stdout or b"").decode(errors="replace")
+            capture = privileged_capture(r.stdout or b'', r.stderr or b'', pw)
+            if not capture['allowed']:
+                terminal.append_err(capture['diagnostic'])
+                unknown += 1
+                continue
+            out = capture['stdout']
         except Exception as e:
-            terminal.append_err(f"{prefix} — smartctl failed: {e}")
+            terminal.append_err(f"{prefix} — smartctl failed; captured output discarded.")
             unknown += 1
             continue
 
@@ -5196,10 +5622,9 @@ class GuidedWizard(QDialog, WorkerMixin):
             if self._selected_fix_idx is not None:
                 self._show_fix_detail(self._selected_fix_idx)
             return
-        if QMessageBox.question(
+        if privileged_question(
             self, "Run Fix?",
-            f"This will run {len(self._cmds)} command(s) with sudo.\n\nProceed?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            f"This will run {len(self._cmds)} command(s) with sudo.\n\nProceed?"
         ) != QMessageBox.StandardButton.Yes:
             return
 
@@ -5303,12 +5728,12 @@ class GuidedWizard(QDialog, WorkerMixin):
             w.finished.connect(scan_slot(self, w, finished, success=False, once=True))
             self._start_worker(w)
         except Exception as exc:
-            state["error"] = str(exc)
+            state["error"] = diagnostic_exception(exc, self._fix_password)
             dispatched = state["finished"]
             if w is not None:
                 record = getattr(w, "_scan_record", None)
                 if record is not None:
-                    record["error"] = str(exc)
+                    record["error"] = state["error"]
                 try:
                     dispatched = dispatched or w.isRunning() or w.isFinished()
                 except Exception:
@@ -5316,7 +5741,7 @@ class GuidedWizard(QDialog, WorkerMixin):
             if not dispatched:
                 state["finished"] = True  # Confirmed no worker to wait for.
             try:
-                self.terminal.append_err(f"Fix command startup failed: {exc}")
+                self.terminal.append_err("Fix command startup failed: " + state["error"])
             except Exception:
                 pass
         finally:
@@ -5681,7 +6106,7 @@ class LynisPanel(QWidget, WorkerMixin):
 
     def _lappend(self, text, colour=None):
         """Append a line to the Lynis output panel."""
-        text = strip_ansi(text)
+        text = sanitize_diagnostic(text, limit=None)
         if not text.strip():
             return
         cur = self.output.textCursor()
@@ -5736,11 +6161,13 @@ class LynisPanel(QWidget, WorkerMixin):
                 if valid:
                     result = self._parse_lynis_output(getattr(w, "full_output", ""))
                 else:
-                    self._parse_lynis_partial(getattr(w, "full_output", ""))
+                    if self._parse_lynis_partial(getattr(w, "full_output", ""), password=password) is False:
+                        w.full_output = ""
                     result = None
-            except Exception as exc:
+            except Exception:
                 result = None
-                self.terminal.append_err(f"Lynis evidence could not be parsed: {exc}")
+                w.full_output = ""
+                self.terminal.append_err("Lynis evidence could not be parsed; details withheld.")
             if type(result) is dict and result.get("outcome") == "succeeded":
                 self.status.setText("Lynis audit complete — current-attempt evidence parsed.")
                 self.terminal.append_ok("Lynis Full Audit complete.")
@@ -5754,9 +6181,12 @@ class LynisPanel(QWidget, WorkerMixin):
         w.finished.connect(scan_slot(self, w, audited, success=False, once=True))
         self._start_worker(w)
 
-    def _parse_lynis_partial(self, text):
+    def _parse_lynis_partial(self, text, password=None):
         """Retain explicit current-attempt observations without a success parser."""
-        for raw in strip_ansi(text).splitlines():
+        safe = True
+        secret = password.decode(errors="replace") if isinstance(password, bytes) else str(password or "")
+        secrets = (secret, normalize_privileged_diagnostic(secret))
+        for raw in text.splitlines():
             line = raw.strip()
             if re.match(r"^\d{4}-\d{2}-\d{2}[ T]", line):
                 continue
@@ -5766,14 +6196,23 @@ class LynisPanel(QWidget, WorkerMixin):
                 continue
             if warning or suggestion:
                 risk = "MEDIUM" if warning else "LOW"
-                self.findings.add_finding(line[:60], "HARDENING", risk,
-                                          "Partial current-attempt Lynis observation: " + line)
+                name = line[:60]
+                description = "Partial current-attempt Lynis observation: " + line
+                # Adding presentation context can reconstruct a credential that
+                # was absent from the capture. Check final fields before storage.
+                if any(known and known in value for known in secrets
+                       for field in (name, description)
+                       for value in (field, normalize_privileged_diagnostic(field))):
+                    safe = False
+                    self._lappend("Unsafe derived Lynis finding withheld.", T["WARN"])
+                    continue
+                self.findings.add_finding(name, "HARDENING", risk, description)
                 self._lappend(line, T["WARN"] if warning else T["TEXT_DIM"])
+        return safe
 
     def _parse_lynis_output(self, text):
         """Current-attempt captured stdout only. Never consult a shared log."""
         self.output.clear()
-        text = strip_ansi(text)
         warns, suggs = [], []
         summary_warns = summary_suggs = index = tests = None
         for raw in text.splitlines():
@@ -6388,10 +6827,9 @@ class ToolCard(QFrame):
             )
             return
         cmd = pkg_install(self.tool["name"])
-        if QMessageBox.question(
+        if privileged_question(
             self, f"Install {self.tool['name']}?",
-            f"Install '{self.tool['name']}'?\n\nRuns: sudo {' '.join(cmd)}",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            f"Install '{self.tool['name']}'?\n\nRuns: sudo {' '.join(cmd)}"
         ) != QMessageBox.StandardButton.Yes:
             return
 
@@ -6443,7 +6881,7 @@ class ToolCard(QFrame):
     @scan_operation
     def _run_tool(self):
         """Run the tool in the terminal panel."""
-        cmd_parts = self.tool["run"].split()
+        cmd_parts = command_argv(self.tool["run"])
         use_sudo  = self.tool.get("safe_run", False)
 
         sudo_password = None
@@ -6762,9 +7200,9 @@ class ToolsPanel(QWidget):
         """Visual distinction for active vs inactive category tabs."""
         for b in self.cat_buttons.values():
             if b.isChecked():
-                set_theme_style(b, lambda : f"background:{T['ACCENT']};color:{T['BG_DARK']};border:1px solid {T['ACCENT']};border-radius:4px;padding:2px 10px;font-weight:bold;")
+                set_theme_style(b, lambda : f"QPushButton {{background:{T['SELECTED']};color:{T['ACCENT']};border:2px solid {T['ACCENT']};border-radius:8px;padding:1px 9px;font-weight:bold;}} QPushButton:hover {{border-color:{T['FOCUS']};}} QPushButton:focus {{border:2px dashed {T['FOCUS']};}}")
             else:
-                set_theme_style(b, lambda : f"background:{T['BG_CARD']};color:{T['TEXT_MAIN']};border:1px solid {T['BORDER']};border-radius:4px;padding:2px 10px;")
+                set_theme_style(b, lambda : f"QPushButton {{background:{T['BG_CARD']};color:{T['TEXT_MAIN']};border:1px solid {T['BORDER']};border-radius:8px;padding:2px 10px;}} QPushButton:hover {{background:{T['HOVER']};border-color:{T['FOCUS']};}} QPushButton:focus {{border:2px solid {T['FOCUS']};padding:1px 9px;}}")
 
     def _set_category(self, cat):
         for c, b in self.cat_buttons.items():
@@ -7103,11 +7541,10 @@ class UndoPanel(QWidget, WorkerMixin):
             if info["argv"] is None:
                 raise UndoHistoryError("Invalid structured undo operation")
             approved = list(info["argv"])
-            if QMessageBox.question(
+            if privileged_question(
                 self, "Confirm Rollback",
                 f"Run: {info['preview']}\n\n{info['does']}\n\n"
-                f"HIGH RISK: {info['risk']}\n\n{info['exploit']}",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                f"HIGH RISK: {info['risk']}\n\n{info['exploit']}"
             ) != QMessageBox.StandardButton.Yes:
                 return
             fresh = self.history_store.get(record_id)
@@ -8516,8 +8953,9 @@ def generate_report(findings_widget, profile_key, mode="executive"):
     # Recommended-tools summary — count installed vs not so the report tells
     # the reader what extra defensive tooling they have (and don't have).
     try:
-        tools_installed = [t for t in TOOLS_DATA if pkg_installed(t["name"])]
-        tools_missing   = [t for t in TOOLS_DATA if not pkg_installed(t["name"])]
+        presence = {name: pkg_installed(name) for name in dict.fromkeys(t["name"] for t in TOOLS_DATA)}
+        tools_installed = [t for t in TOOLS_DATA if presence[t["name"]]]
+        tools_missing   = [t for t in TOOLS_DATA if not presence[t["name"]]]
     except Exception:
         tools_installed, tools_missing = [], []
     tools_rows_installed = "".join(

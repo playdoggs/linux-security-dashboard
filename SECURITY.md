@@ -19,7 +19,12 @@ The user is the **operator** of the app — sudo password is theirs, every destr
 
 ## Findings
 
-### S-001 (LOW) — `_act` parses confirmed action commands with `cmd.split()` instead of `shlex.split()`
+### S-001 (LOW) — Legacy action parsing — corrected in final 4H hardening
+
+Current status (2026-11-21): H05 now normalizes built-in recipes into structured
+argv, resolves privileged executables through protected system paths, and uses a
+clean child environment. Saved undo strings remain non-executable. The evidence
+below is historical; see [the current handover](agent_docs/final_security_hardening.md).
 
 - **Where:** [linux-security-dashboard.py:2554](linux-security-dashboard.py#L2554) — `w = CommandWorker(cmd.split(), sudo=True, password=sudo_password)`
 - **Convention being violated:** [agent_docs/code_conventions.md](agent_docs/code_conventions.md) — *"Parse user-facing fix commands with `shlex.split()`. Never `cmd.split()`."* Documented as a regression guard in [agent_docs/known_bugs.md](agent_docs/known_bugs.md).
@@ -243,3 +248,17 @@ OS-level reaping delays defer closure while the GUI continues processing events.
 See [ARCHITECTURE.md](ARCHITECTURE.md#increment-4-stage-4f-shutdown-and-http-execution)
 for exact limits and packaging assumptions. External forced termination is outside
 the graceful-close contract; persistence recovery remains fail-closed.
+
+
+## Final 4H privileged execution and diagnostics hardening — 2026-11-21
+
+H03/H05/H16 are corrected in the current working tree, pending independent review:
+package installers/removals/restores, `dpkg-reconfigure` and privileged shell recipes
+use retained no-kill transaction ownership; protected system executable resolution
+and structured argv replace privileged PATH/whitespace splitting; diagnostics and
+unexpected exception payloads are sanitized before signals/UI/logging/storage.
+Existing confirmations, structured undo validation and durable claims are preserved.
+No real installation or sudo operation has been tested. See
+[final_security_hardening.md](agent_docs/final_security_hardening.md) for current
+locations, executed tests and residual risks. Historical pending-review labels and
+line numbers elsewhere in this document do not override that scoped evidence.

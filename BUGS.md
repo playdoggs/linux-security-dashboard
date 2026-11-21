@@ -81,7 +81,12 @@ Last reviewed: 2026-05-03
 - **Result today:** The fallback silently swallows the error and the panel falls through to "live output" parsing ([3958-4012](linux-security-dashboard.py#L3958-L4012)). The user gets a degraded but non-empty result. Not a crash; a silent quality drop.
 - **Fix sketch:** When the sudo-fallback fails, surface a single-line message to the user (`self._lappend("⚠ Could not read /var/log/lynis.log even with cached sudo. Showing live output only.")`) instead of falling through silently.
 
-### B-008 — `cmd.split()` in `_act` and `replace("sudo ", "").split()` in `_run_undo`
+### B-008 — Legacy privileged command splitting — corrected
+
+Current status (2026-11-21): `_act` supplies structured argv; privileged executable
+lookup ignores caller PATH. Undo remains governed by the Increment 2 allowlist,
+not stored command text. Historical reproduction below is retained for traceability.
+See [the final hardening handover](agent_docs/final_security_hardening.md).
 
 - **Where:** [linux-security-dashboard.py:2554](linux-security-dashboard.py#L2554), [5115](linux-security-dashboard.py#L5115).
 - **Why it's also a bug, not just a security smell:** A future contributor adding a finding with shell-special characters in `cmd_remove` would silently get the wrong argv. Today the inputs are constrained, but the convention exists ([agent_docs/code_conventions.md](agent_docs/code_conventions.md)) precisely to prevent this regression.

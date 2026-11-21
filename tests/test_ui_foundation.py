@@ -60,6 +60,19 @@ class UiFoundation(unittest.TestCase):
         self.assertNotEqual(enterprise['SIDEBAR'],hybrid['SIDEBAR'])
         self.assertNotEqual(enterprise['NAV_TEXT'],hybrid['NAV_TEXT'])
 
+    def test_selected_states_include_structural_cues_in_all_themes(self):
+        for theme in self.ns['THEMES']:
+            self.ns['apply_theme'](theme)
+            css=self.ns['make_style']()
+            self.assertIn('QCheckBox:checked, QRadioButton:checked',css)
+            self.assertIn('QCheckBox::indicator, QRadioButton::indicator',css)
+            self.assertIn('border-left:4px solid',css)  # Navigation marker, independent of fill.
+            self.assertIn('border-bottom:3px solid',css)  # Selected finding row.
+            self.assertIn('font-weight:600',css)
+            self.assertIn('QPushButton:focus',css)
+            # Keep native tick/dot drawings rather than a theme-specific image.
+            self.assertNotIn('image:',css)
+
     def test_bound_inline_styles_follow_tokens_and_keep_loop_values(self):
         widgets=[]
         for key in ('OK','DANGER'):
@@ -90,3 +103,24 @@ class UiFoundation(unittest.TestCase):
         self.assertGreaterEqual(self.ns['UI_METRICS']['row_min'],44)
         self.assertGreaterEqual(self.ns['UI_METRICS']['risk_width'],148)
         self.assertGreaterEqual(self.ns['UI_METRICS']['control_min'],32)
+
+    def test_reference_palette_keeps_text_readable_in_selected_and_primary_states(self):
+        for name in ('Enterprise Workspace','Hybrid Professional'):
+            self.ns['apply_theme'](name);p=self.ns['T']
+            for foreground,background in (('TEXT_MAIN','SELECTED'),('ACCENT','SELECTED'),
+                                          ('ACCENT_TEXT','ACCENT'),('NAV_ACCENT','NAV_ACTIVE')):
+                self.assertGreaterEqual(contrast(p[foreground],p[background]),4.5,(name,foreground,background))
+            self.assertGreaterEqual(contrast(p['FOCUS'],p['BG_MID']),3)
+            self.assertEqual(p['ACCENT'],'#08786f')
+            self.assertEqual(p['BG_MID'],'#ffffff')  # References do not replace light content.
+
+    def test_focus_and_disabled_primary_states_have_explicit_rules(self):
+        css=self.ns['make_style']()
+        for selector in ('QPushButton[uiRole="primary"]:disabled',
+                         'QPushButton[uiRole="primary"]:focus',
+                         'QPushButton#section_btn:checked:focus',
+                         'QCheckBox:focus, QRadioButton:focus',
+                         'QDialogButtonBox','QTableWidget::indicator'):
+            self.assertIn(selector,css)
+        self.assertIn('padding:2px',css)  # Compensate for the thicker check/radio focus border.
+        self.assertIn('border-style:dashed',css)  # Focus differs from the solid default-button edge.

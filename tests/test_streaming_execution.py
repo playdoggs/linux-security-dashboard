@@ -18,13 +18,16 @@ original = subprocess.Popen
 children=[]
 def launch(argv, **kwargs):
     if mode == 'stdin':
-        assert argv[:2] == ['sudo', '-S']
-        argv=argv[2:]  # Substitute only our Python fixture; NEVER execute sudo.
+        pass  # Invocation builder below substitutes only our Python fixture.
     assert argv[:3] == [sys.executable, '-B', '-c']
     child=original(argv, **kwargs)
     children.append(child)
     return child
 subprocess.Popen=launch
+if mode == 'stdin':
+    # Test OS pipe backpressure independently of authentication policy. The
+    # production boundary rejects >4096 bytes; no sudo wrapper is executed.
+    NS['privileged_invocation'] = lambda command,password: (command,None)
 worker=Worker([sys.executable, '-B', '-c', fixture], timeout=timeout,
               sudo=mode=='stdin', password=b'x'*1048576 if mode=='stdin' else None)
 events=[]

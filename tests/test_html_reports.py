@@ -1,12 +1,29 @@
 """Real report generation and finding rendering; no host probes or GUI startup."""
 import html
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import capture_ui_baseline as baseline
 
 
 class HtmlReports(unittest.TestCase):
+    def test_tool_presence_is_queried_once_per_unique_tool_per_report(self):
+        ns=baseline.namespace()
+        ns['TOOLS_DATA']=[dict(name=name,cat='Fixture',desc='Synthetic')
+                          for name in ('present-tool','missing-tool','present-tool')]
+        presence=Mock(side_effect=lambda name:name=='present-tool')
+        ns['pkg_installed']=presence
+        with patch.object(baseline,'namespace',return_value=ns):
+            data,reports=baseline.capture('query-count')
+        # Both complete report modes ran; each gets a fresh, internally consistent snapshot.
+        self.assertEqual(presence.call_count,4)
+        self.assertEqual([call.args[0] for call in presence.call_args_list],
+                         ['present-tool','missing-tool']*2)
+        for mode in ('executive','technical'):
+            self.assertEqual(data['reports'][mode]['status'],'generated')
+            self.assertIn('present-tool',reports[f'query-count-{mode}.html'])
+            self.assertIn('missing-tool',reports[f'query-count-{mode}.html'])
+
     def test_real_reports_preserve_simple_expert_selection_scores_and_coverage(self):
         with patch.object(baseline.subprocess,'run',side_effect=AssertionError('Host probe prohibited')):
             for expert in (True, False):

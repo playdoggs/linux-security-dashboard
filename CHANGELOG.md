@@ -5,6 +5,31 @@ All notable changes to Linux Security Dashboard are documented here.
 ## [Unreleased] — v4.2.1
 
 ### Changed
+- Release stabilization: validate intermediate executable symlinks and Linux path
+  semantics; jointly gate complete privileged stdout/stderr after normalization
+  and cleanup; suppress known-credential boundary and derived Lynis disclosures.
+  Preserve package transaction ownership and safe confirmation defaults. Final
+  regression suite: 341 passed; synthetic offscreen and native Wayland GUI
+  acceptance passed. See `agent_docs/running_tests.md` for scope and limitations.
+- Final Increment 4H confirmation hardening: fix H15 by disabling Qt auto-default
+  promotion and focusing the sole No/Cancel default. Apply the same policy to
+  prerequisite, pre-action, guided-fix, tool-install and rollback confirmations.
+  Keep explicit Space/click approval; add real Qt Enter/Escape/Space/Tab tests,
+  runtime default/focus assertions and profile keyboard/focus evidence. Distinguish
+  focused buttons with dashed outlines; preserve privilege execution and workers.
+- UI reference alignment: adapt the supplied teal component/state references to
+  Enterprise light and Hybrid appearances. Share selection, hover, focus, disabled,
+  dialog-footer and primary-action styles; retain native indicators, legacy themes,
+  scan semantics and prerequisite policies. Document tokens and before/after
+  synthetic desktop evidence. Record the pre-existing Qt approval-default mismatch
+  separately; no approval workflow change accompanies this visual work.
+- Increment 4H consolidated hardening: reject unknown APT simulation actions and
+  unsupported output; pace every transaction-collector recovery iteration without
+  terminating APT. Distinguish executable discovery from root-controlled-path
+  checks, including installer tool parents and resolved targets. Add structural
+  selected-state cues for checked controls, rows, navigation and tool categories.
+  Query each unique tool once per generated report. Record wider review findings
+  and defer changes to privilege policy, scan semantics and worker architecture.
 - Increment 4H: add Settings → Prerequisites with read-only startup discovery,
   targeted pre-scan gates, five explicit availability states, unchecked selection,
   individual/batch installation and candidate/release allowlists. Preview pinned
@@ -137,3 +162,16 @@ All notable changes to Linux Security Dashboard are documented here.
 
 ## [v4.2]
 - Current production baseline reflected by this repository state.
+
+
+### Final 4H security hardening (2026-11-21)
+
+- Route legacy privileged package installs/removals/restorations and authorized shell
+  recipes through retained, no-forced-termination transaction ownership.
+- Build privileged argv using protected system executables and a clean environment;
+  normalize legacy built-in action text with shell-aware tokenization, never stored
+  undo command text. Structured undo validation remains unchanged.
+- Sanitize package diagnostics and exception boundaries before UI/logging/signals;
+  suppress raw privileged streaming previews until whole-capture redaction.
+- Preserve confirmations, worker completion guards, shutdown, assessment/report
+  semantics and the approved UI design. See agent_docs/final_security_hardening.md.

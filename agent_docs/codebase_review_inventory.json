@@ -1,0 +1,4228 @@
+{
+  "application_definitions": [
+    {
+      "name": "init_logging",
+      "line": 64,
+      "end": 79
+    },
+    {
+      "name": "load_config",
+      "line": 85,
+      "end": 89
+    },
+    {
+      "name": "save_config",
+      "line": 91,
+      "end": 101
+    },
+    {
+      "name": "config_bool",
+      "line": 103,
+      "end": 109
+    },
+    {
+      "name": "get_startup_theme",
+      "line": 111,
+      "end": 122
+    },
+    {
+      "name": "valid_pkg",
+      "line": 127,
+      "end": 129
+    },
+    {
+      "name": "strip_ansi",
+      "line": 133,
+      "end": 135
+    },
+    {
+      "name": "fs",
+      "line": 141,
+      "end": 143
+    },
+    {
+      "name": "apply_theme",
+      "line": 190,
+      "end": 208
+    },
+    {
+      "name": "build_palette",
+      "line": 210,
+      "end": 242
+    },
+    {
+      "name": "make_style",
+      "line": 244,
+      "end": 298
+    },
+    {
+      "name": "ThemeColor",
+      "line": 301,
+      "end": 305
+    },
+    {
+      "name": "ThemeColor.__init__",
+      "line": 303,
+      "end": 303
+    },
+    {
+      "name": "ThemeColor.__str__",
+      "line": 304,
+      "end": 304
+    },
+    {
+      "name": "ThemeColor.__format__",
+      "line": 305,
+      "end": 305
+    },
+    {
+      "name": "theme_value",
+      "line": 308,
+      "end": 313
+    },
+    {
+      "name": "set_theme_style",
+      "line": 316,
+      "end": 319
+    },
+    {
+      "name": "foundation_geometry",
+      "line": 322,
+      "end": 356
+    },
+    {
+      "name": "foundation_toolbar",
+      "line": 359,
+      "end": 390
+    },
+    {
+      "name": "refresh_theme_widgets",
+      "line": 393,
+      "end": 448
+    },
+    {
+      "name": "FoundationEvents",
+      "line": 451,
+      "end": 455
+    },
+    {
+      "name": "FoundationEvents.eventFilter",
+      "line": 452,
+      "end": 455
+    },
+    {
+      "name": "prerequisite_os",
+      "line": 497,
+      "end": 503
+    },
+    {
+      "name": "prerequisite_read",
+      "line": 506,
+      "end": 517
+    },
+    {
+      "name": "prerequisite_candidate",
+      "line": 520,
+      "end": 527
+    },
+    {
+      "name": "prerequisite_rows",
+      "line": 530,
+      "end": 546
+    },
+    {
+      "name": "detect_prerequisites",
+      "line": 549,
+      "end": 589
+    },
+    {
+      "name": "prerequisite_apt_state",
+      "line": 592,
+      "end": 635
+    },
+    {
+      "name": "prerequisite_apt_argv",
+      "line": 647,
+      "end": 658
+    },
+    {
+      "name": "parse_prerequisite_simulation",
+      "line": 661,
+      "end": 682
+    },
+    {
+      "name": "build_prerequisite_plan",
+      "line": 685,
+      "end": 713
+    },
+    {
+      "name": "verify_prerequisite_plan",
+      "line": 716,
+      "end": 732
+    },
+    {
+      "name": "prerequisite_redact",
+      "line": 735,
+      "end": 738
+    },
+    {
+      "name": "prerequisite_gate",
+      "line": 741,
+      "end": 763
+    },
+    {
+      "name": "open_prerequisite_scheduler",
+      "line": 767,
+      "end": 774
+    },
+    {
+      "name": "L",
+      "line": 905,
+      "end": 909
+    },
+    {
+      "name": "detect_distro",
+      "line": 912,
+      "end": 928
+    },
+    {
+      "name": "pkg_install",
+      "line": 932,
+      "end": 938
+    },
+    {
+      "name": "pkg_remove",
+      "line": 940,
+      "end": 947
+    },
+    {
+      "name": "pkg_installed",
+      "line": 949,
+      "end": 967
+    },
+    {
+      "name": "coverage_result",
+      "line": 975,
+      "end": 976
+    },
+    {
+      "name": "assessment_complete",
+      "line": 979,
+      "end": 985
+    },
+    {
+      "name": "assessment_verdict",
+      "line": 988,
+      "end": 1003
+    },
+    {
+      "name": "assessment_details",
+      "line": 1006,
+      "end": 1023
+    },
+    {
+      "name": "probe_package",
+      "line": 1026,
+      "end": 1056
+    },
+    {
+      "name": "check_update_age",
+      "line": 1059,
+      "end": 1082
+    },
+    {
+      "name": "check_sudo_cached",
+      "line": 1084,
+      "end": 1094
+    },
+    {
+      "name": "timeshift_is_configured",
+      "line": 1096,
+      "end": 1104
+    },
+    {
+      "name": "create_timeshift_snapshot",
+      "line": 1106,
+      "end": 1150
+    },
+    {
+      "name": "has_internet",
+      "line": 1152,
+      "end": 1162
+    },
+    {
+      "name": "get_system_info",
+      "line": 1164,
+      "end": 1236
+    },
+    {
+      "name": "prompt_for_sudo_password",
+      "line": 1238,
+      "end": 1258
+    },
+    {
+      "name": "get_rollback_info",
+      "line": 1314,
+      "end": 1328
+    },
+    {
+      "name": "get_face_pixmap",
+      "line": 1467,
+      "end": 1484
+    },
+    {
+      "name": "SessionTracker",
+      "line": 1488,
+      "end": 1574
+    },
+    {
+      "name": "SessionTracker.__init__",
+      "line": 1492,
+      "end": 1500
+    },
+    {
+      "name": "SessionTracker.log_scan",
+      "line": 1502,
+      "end": 1506
+    },
+    {
+      "name": "SessionTracker.log_action",
+      "line": 1508,
+      "end": 1510
+    },
+    {
+      "name": "SessionTracker.build_summary",
+      "line": 1512,
+      "end": 1574
+    },
+    {
+      "name": "RiskTracker",
+      "line": 1580,
+      "end": 1617
+    },
+    {
+      "name": "RiskTracker.__init__",
+      "line": 1584,
+      "end": 1586
+    },
+    {
+      "name": "RiskTracker.add",
+      "line": 1588,
+      "end": 1590
+    },
+    {
+      "name": "RiskTracker.remove_entry",
+      "line": 1592,
+      "end": 1597
+    },
+    {
+      "name": "RiskTracker.clear",
+      "line": 1599,
+      "end": 1601
+    },
+    {
+      "name": "RiskTracker.score",
+      "line": 1603,
+      "end": 1608
+    },
+    {
+      "name": "RiskTracker.label",
+      "line": 1610,
+      "end": 1617
+    },
+    {
+      "name": "build_undo_argv",
+      "line": 1637,
+      "end": 1671
+    },
+    {
+      "name": "make_undo_operation",
+      "line": 1674,
+      "end": 1698
+    },
+    {
+      "name": "make_undo_cmd",
+      "line": 1701,
+      "end": 1706
+    },
+    {
+      "name": "normalize_undo_record",
+      "line": 1714,
+      "end": 1727
+    },
+    {
+      "name": "undo_presentation",
+      "line": 1730,
+      "end": 1755
+    },
+    {
+      "name": "save_undo_entry",
+      "line": 1758,
+      "end": 1774
+    },
+    {
+      "name": "load_undo_log",
+      "line": 1777,
+      "end": 1816
+    },
+    {
+      "name": "UndoHistoryError",
+      "line": 1818,
+      "end": 1819
+    },
+    {
+      "name": "UndoHistoryStore",
+      "line": 1822,
+      "end": 2173
+    },
+    {
+      "name": "UndoHistoryStore.__init__",
+      "line": 1878,
+      "end": 1887
+    },
+    {
+      "name": "UndoHistoryStore._id",
+      "line": 1890,
+      "end": 1899
+    },
+    {
+      "name": "UndoHistoryStore._now",
+      "line": 1902,
+      "end": 1903
+    },
+    {
+      "name": "UndoHistoryStore._check_stat",
+      "line": 1906,
+      "end": 1912
+    },
+    {
+      "name": "UndoHistoryStore._open_directory",
+      "line": 1914,
+      "end": 1940
+    },
+    {
+      "name": "UndoHistoryStore._check_files",
+      "line": 1942,
+      "end": 1953
+    },
+    {
+      "name": "UndoHistoryStore._check_schema",
+      "line": 1955,
+      "end": 1966
+    },
+    {
+      "name": "UndoHistoryStore._connection",
+      "line": 1969,
+      "end": 2035
+    },
+    {
+      "name": "UndoHistoryStore._transaction",
+      "line": 2039,
+      "end": 2047
+    },
+    {
+      "name": "UndoHistoryStore._event",
+      "line": 2049,
+      "end": 2052
+    },
+    {
+      "name": "UndoHistoryStore.create",
+      "line": 2054,
+      "end": 2071
+    },
+    {
+      "name": "UndoHistoryStore._decode",
+      "line": 2073,
+      "end": 2088
+    },
+    {
+      "name": "UndoHistoryStore.get",
+      "line": 2090,
+      "end": 2097
+    },
+    {
+      "name": "UndoHistoryStore.claim",
+      "line": 2099,
+      "end": 2120
+    },
+    {
+      "name": "UndoHistoryStore.finish",
+      "line": 2122,
+      "end": 2137
+    },
+    {
+      "name": "UndoHistoryStore.page",
+      "line": 2139,
+      "end": 2158
+    },
+    {
+      "name": "UndoHistoryStore.events",
+      "line": 2160,
+      "end": 2173
+    },
+    {
+      "name": "CommandWorker",
+      "line": 2181,
+      "end": 2285
+    },
+    {
+      "name": "CommandWorker.__init__",
+      "line": 2194,
+      "end": 2201
+    },
+    {
+      "name": "CommandWorker.run",
+      "line": 2203,
+      "end": 2285
+    },
+    {
+      "name": "StreamingCommandWorker",
+      "line": 2288,
+      "end": 2461
+    },
+    {
+      "name": "StreamingCommandWorker.__init__",
+      "line": 2304,
+      "end": 2310
+    },
+    {
+      "name": "StreamingCommandWorker._emit_progress",
+      "line": 2312,
+      "end": 2320
+    },
+    {
+      "name": "StreamingCommandWorker._collect_output",
+      "line": 2322,
+      "end": 2383
+    },
+    {
+      "name": "StreamingCommandWorker._cleanup_child",
+      "line": 2385,
+      "end": 2400
+    },
+    {
+      "name": "StreamingCommandWorker.run",
+      "line": 2402,
+      "end": 2461
+    },
+    {
+      "name": "HttpWorker",
+      "line": 2464,
+      "end": 2565
+    },
+    {
+      "name": "HttpWorker.__init__",
+      "line": 2473,
+      "end": 2477
+    },
+    {
+      "name": "HttpWorker.cancel",
+      "line": 2479,
+      "end": 2481
+    },
+    {
+      "name": "HttpWorker._classify_error",
+      "line": 2483,
+      "end": 2497
+    },
+    {
+      "name": "HttpWorker._request_url",
+      "line": 2519,
+      "end": 2521
+    },
+    {
+      "name": "HttpWorker._fetch",
+      "line": 2523,
+      "end": 2536
+    },
+    {
+      "name": "HttpWorker.run",
+      "line": 2538,
+      "end": 2565
+    },
+    {
+      "name": "ScanOwnership",
+      "line": 2568,
+      "end": 2605
+    },
+    {
+      "name": "ScanOwnership.__init__",
+      "line": 2570,
+      "end": 2575
+    },
+    {
+      "name": "ScanOwnership.enter",
+      "line": 2577,
+      "end": 2589
+    },
+    {
+      "name": "ScanOwnership.leave",
+      "line": 2591,
+      "end": 2594
+    },
+    {
+      "name": "ScanOwnership.retire",
+      "line": 2596,
+      "end": 2601
+    },
+    {
+      "name": "ScanOwnership._release",
+      "line": 2603,
+      "end": 2605
+    },
+    {
+      "name": "scan_owner",
+      "line": 2608,
+      "end": 2612
+    },
+    {
+      "name": "scan_join",
+      "line": 2615,
+      "end": 2617
+    },
+    {
+      "name": "scan_operation",
+      "line": 2620,
+      "end": 2713
+    },
+    {
+      "name": "bind_scan_worker",
+      "line": 2716,
+      "end": 2723
+    },
+    {
+      "name": "scan_slot",
+      "line": 2726,
+      "end": 2750
+    },
+    {
+      "name": "WorkerMixin",
+      "line": 2754,
+      "end": 2886
+    },
+    {
+      "name": "WorkerMixin._init_workers",
+      "line": 2759,
+      "end": 2762
+    },
+    {
+      "name": "WorkerMixin._start_worker",
+      "line": 2764,
+      "end": 2821
+    },
+    {
+      "name": "WorkerMixin._start_assessment_worker",
+      "line": 2823,
+      "end": 2877
+    },
+    {
+      "name": "WorkerMixin._stop_all_workers",
+      "line": 2879,
+      "end": 2881
+    },
+    {
+      "name": "WorkerMixin._any_running",
+      "line": 2884,
+      "end": 2886
+    },
+    {
+      "name": "PrerequisiteJob",
+      "line": 2889,
+      "end": 2903
+    },
+    {
+      "name": "PrerequisiteJob.__init__",
+      "line": 2892,
+      "end": 2896
+    },
+    {
+      "name": "PrerequisiteJob.run",
+      "line": 2897,
+      "end": 2903
+    },
+    {
+      "name": "execute_prerequisite_plan",
+      "line": 2906,
+      "end": 2982
+    },
+    {
+      "name": "PrerequisitesPanel",
+      "line": 2985,
+      "end": 3245
+    },
+    {
+      "name": "PrerequisitesPanel.__init__",
+      "line": 2987,
+      "end": 3025
+    },
+    {
+      "name": "PrerequisitesPanel.selected_packages",
+      "line": 3027,
+      "end": 3029
+    },
+    {
+      "name": "PrerequisitesPanel._selection_changed",
+      "line": 3031,
+      "end": 3032
+    },
+    {
+      "name": "PrerequisitesPanel._render",
+      "line": 3034,
+      "end": 3073
+    },
+    {
+      "name": "PrerequisitesPanel._launch",
+      "line": 3075,
+      "end": 3119
+    },
+    {
+      "name": "PrerequisitesPanel.refresh",
+      "line": 3121,
+      "end": 3143
+    },
+    {
+      "name": "PrerequisitesPanel.install",
+      "line": 3146,
+      "end": 3234
+    },
+    {
+      "name": "PrerequisitesPanel._receive_progress",
+      "line": 3236,
+      "end": 3238
+    },
+    {
+      "name": "PrerequisitesPanel.terminal_progress",
+      "line": 3240,
+      "end": 3243
+    },
+    {
+      "name": "ArrowSplitterHandle",
+      "line": 3250,
+      "end": 3263
+    },
+    {
+      "name": "ArrowSplitterHandle.paintEvent",
+      "line": 3252,
+      "end": 3263
+    },
+    {
+      "name": "CueSplitter",
+      "line": 3266,
+      "end": 3269
+    },
+    {
+      "name": "CueSplitter.createHandle",
+      "line": 3268,
+      "end": 3269
+    },
+    {
+      "name": "TerminalPanel",
+      "line": 3273,
+      "end": 3363
+    },
+    {
+      "name": "TerminalPanel._clear_output",
+      "line": 3279,
+      "end": 3280
+    },
+    {
+      "name": "TerminalPanel.__init__",
+      "line": 3282,
+      "end": 3318
+    },
+    {
+      "name": "TerminalPanel._adjust_font",
+      "line": 3320,
+      "end": 3326
+    },
+    {
+      "name": "TerminalPanel.append",
+      "line": 3328,
+      "end": 3342
+    },
+    {
+      "name": "TerminalPanel.append_cmd",
+      "line": 3345,
+      "end": 3347
+    },
+    {
+      "name": "TerminalPanel.append_ok",
+      "line": 3349,
+      "end": 3351
+    },
+    {
+      "name": "TerminalPanel.append_err",
+      "line": 3353,
+      "end": 3355
+    },
+    {
+      "name": "TerminalPanel.append_warn",
+      "line": 3357,
+      "end": 3359
+    },
+    {
+      "name": "TerminalPanel.append_info",
+      "line": 3361,
+      "end": 3363
+    },
+    {
+      "name": "RiskScorePanel",
+      "line": 3367,
+      "end": 3504
+    },
+    {
+      "name": "RiskScorePanel.__init__",
+      "line": 3372,
+      "end": 3425
+    },
+    {
+      "name": "RiskScorePanel.update_face",
+      "line": 3427,
+      "end": 3430
+    },
+    {
+      "name": "RiskScorePanel.update_score",
+      "line": 3432,
+      "end": 3448
+    },
+    {
+      "name": "RiskScorePanel.bind_findings",
+      "line": 3450,
+      "end": 3452
+    },
+    {
+      "name": "RiskScorePanel._section_scores",
+      "line": 3454,
+      "end": 3490
+    },
+    {
+      "name": "RiskScorePanel.set_profile",
+      "line": 3492,
+      "end": 3496
+    },
+    {
+      "name": "RiskScorePanel._check_update_age",
+      "line": 3498,
+      "end": 3504
+    },
+    {
+      "name": "PreActionDialog",
+      "line": 3508,
+      "end": 3594
+    },
+    {
+      "name": "PreActionDialog.__init__",
+      "line": 3513,
+      "end": 3594
+    },
+    {
+      "name": "ExplainDialog",
+      "line": 3669,
+      "end": 3774
+    },
+    {
+      "name": "ExplainDialog.__init__",
+      "line": 3673,
+      "end": 3774
+    },
+    {
+      "name": "ResponsiveFindingsTable",
+      "line": 3777,
+      "end": 3877
+    },
+    {
+      "name": "ResponsiveFindingsTable.__init__",
+      "line": 3779,
+      "end": 3791
+    },
+    {
+      "name": "ResponsiveFindingsTable.schedule_fit",
+      "line": 3793,
+      "end": 3796
+    },
+    {
+      "name": "ResponsiveFindingsTable.setCellWidget",
+      "line": 3798,
+      "end": 3803
+    },
+    {
+      "name": "ResponsiveFindingsTable.removeCellWidget",
+      "line": 3805,
+      "end": 3808
+    },
+    {
+      "name": "ResponsiveFindingsTable._watch_action_widget",
+      "line": 3810,
+      "end": 3813
+    },
+    {
+      "name": "ResponsiveFindingsTable.eventFilter",
+      "line": 3815,
+      "end": 3820
+    },
+    {
+      "name": "ResponsiveFindingsTable.changeEvent",
+      "line": 3822,
+      "end": 3826
+    },
+    {
+      "name": "ResponsiveFindingsTable._recalculate_minimums",
+      "line": 3828,
+      "end": 3844
+    },
+    {
+      "name": "ResponsiveFindingsTable.resizeEvent",
+      "line": 3846,
+      "end": 3848
+    },
+    {
+      "name": "ResponsiveFindingsTable.fit_columns",
+      "line": 3850,
+      "end": 3868
+    },
+    {
+      "name": "ResponsiveFindingsTable.viewportEvent",
+      "line": 3870,
+      "end": 3877
+    },
+    {
+      "name": "FindingsTable",
+      "line": 3881,
+      "end": 4451
+    },
+    {
+      "name": "FindingsTable.__init__",
+      "line": 3893,
+      "end": 3973
+    },
+    {
+      "name": "FindingsTable._risk_display",
+      "line": 3978,
+      "end": 3986
+    },
+    {
+      "name": "FindingsTable._risk_colour",
+      "line": 3988,
+      "end": 3993
+    },
+    {
+      "name": "FindingsTable._get_tag",
+      "line": 3995,
+      "end": 4017
+    },
+    {
+      "name": "FindingsTable._is_duplicate",
+      "line": 4019,
+      "end": 4022
+    },
+    {
+      "name": "FindingsTable._drop_seen_name",
+      "line": 4024,
+      "end": 4026
+    },
+    {
+      "name": "FindingsTable._apply_ok_banner_style",
+      "line": 4028,
+      "end": 4030
+    },
+    {
+      "name": "FindingsTable.refresh_theme_styles",
+      "line": 4032,
+      "end": 4034
+    },
+    {
+      "name": "FindingsTable._build_action_cell",
+      "line": 4036,
+      "end": 4098
+    },
+    {
+      "name": "FindingsTable.begin_bulk_update",
+      "line": 4100,
+      "end": 4104
+    },
+    {
+      "name": "FindingsTable.end_bulk_update",
+      "line": 4106,
+      "end": 4115
+    },
+    {
+      "name": "FindingsTable.add_finding",
+      "line": 4117,
+      "end": 4184
+    },
+    {
+      "name": "FindingsTable._sort_by_risk",
+      "line": 4186,
+      "end": 4257
+    },
+    {
+      "name": "FindingsTable._ignore",
+      "line": 4260,
+      "end": 4278
+    },
+    {
+      "name": "FindingsTable._on_double_click",
+      "line": 4280,
+      "end": 4286
+    },
+    {
+      "name": "FindingsTable._act",
+      "line": 4289,
+      "end": 4348
+    },
+    {
+      "name": "FindingsTable._verify",
+      "line": 4350,
+      "end": 4395
+    },
+    {
+      "name": "FindingsTable._remove_finding_and_update_score",
+      "line": 4397,
+      "end": 4408
+    },
+    {
+      "name": "FindingsTable.clear_findings",
+      "line": 4411,
+      "end": 4421
+    },
+    {
+      "name": "FindingsTable.set_assessment_coverage",
+      "line": 4423,
+      "end": 4426
+    },
+    {
+      "name": "FindingsTable.show_all_ok_banner",
+      "line": 4428,
+      "end": 4435
+    },
+    {
+      "name": "FindingsTable.hide_all_ok_banner",
+      "line": 4437,
+      "end": 4439
+    },
+    {
+      "name": "FindingsTable._filter_rows",
+      "line": 4441,
+      "end": 4451
+    },
+    {
+      "name": "detect_profile",
+      "line": 4504,
+      "end": 4537
+    },
+    {
+      "name": "run_quick_checks",
+      "line": 4541,
+      "end": 4684
+    },
+    {
+      "name": "run_temperature_check",
+      "line": 4702,
+      "end": 4825
+    },
+    {
+      "name": "_list_physical_drives",
+      "line": 4837,
+      "end": 4858
+    },
+    {
+      "name": "run_drive_health_check",
+      "line": 4860,
+      "end": 4970
+    },
+    {
+      "name": "GuidedWizard",
+      "line": 4974,
+      "end": 5638
+    },
+    {
+      "name": "GuidedWizard.done",
+      "line": 4979,
+      "end": 4983
+    },
+    {
+      "name": "GuidedWizard.closeEvent",
+      "line": 4985,
+      "end": 4990
+    },
+    {
+      "name": "GuidedWizard.__init__",
+      "line": 4992,
+      "end": 5135
+    },
+    {
+      "name": "GuidedWizard._on_item_clicked",
+      "line": 5137,
+      "end": 5140
+    },
+    {
+      "name": "GuidedWizard._show_fix_detail",
+      "line": 5142,
+      "end": 5172
+    },
+    {
+      "name": "GuidedWizard._refresh_fix_statuses",
+      "line": 5174,
+      "end": 5183
+    },
+    {
+      "name": "GuidedWizard._run_fix",
+      "line": 5186,
+      "end": 5238
+    },
+    {
+      "name": "GuidedWizard._run_next_fix_cmd",
+      "line": 5240,
+      "end": 5324
+    },
+    {
+      "name": "GuidedWizard._fix_failed",
+      "line": 5326,
+      "end": 5338
+    },
+    {
+      "name": "GuidedWizard._fix_ufw",
+      "line": 5341,
+      "end": 5351
+    },
+    {
+      "name": "GuidedWizard._fix_fail2ban",
+      "line": 5353,
+      "end": 5362
+    },
+    {
+      "name": "GuidedWizard._fix_ssh",
+      "line": 5364,
+      "end": 5412
+    },
+    {
+      "name": "GuidedWizard._fix_autoupdate",
+      "line": 5414,
+      "end": 5421
+    },
+    {
+      "name": "GuidedWizard._fix_coredump",
+      "line": 5423,
+      "end": 5430
+    },
+    {
+      "name": "GuidedWizard._fix_kernel",
+      "line": 5432,
+      "end": 5444
+    },
+    {
+      "name": "GuidedWizard._fix_network",
+      "line": 5446,
+      "end": 5473
+    },
+    {
+      "name": "GuidedWizard._fix_protocols",
+      "line": 5475,
+      "end": 5484
+    },
+    {
+      "name": "GuidedWizard._fix_filesystems",
+      "line": 5486,
+      "end": 5495
+    },
+    {
+      "name": "GuidedWizard._fix_dma",
+      "line": 5497,
+      "end": 5507
+    },
+    {
+      "name": "GuidedWizard._fix_apparmor",
+      "line": 5509,
+      "end": 5521
+    },
+    {
+      "name": "GuidedWizard._fix_cad",
+      "line": 5523,
+      "end": 5529
+    },
+    {
+      "name": "GuidedWizard._run_check",
+      "line": 5533,
+      "end": 5539
+    },
+    {
+      "name": "GuidedWizard._check_ufw",
+      "line": 5541,
+      "end": 5545
+    },
+    {
+      "name": "GuidedWizard._check_fail2ban",
+      "line": 5547,
+      "end": 5549
+    },
+    {
+      "name": "GuidedWizard._check_ssh",
+      "line": 5551,
+      "end": 5565
+    },
+    {
+      "name": "GuidedWizard._find_sshd_config",
+      "line": 5568,
+      "end": 5573
+    },
+    {
+      "name": "GuidedWizard._detect_ssh_service_name",
+      "line": 5576,
+      "end": 5591
+    },
+    {
+      "name": "GuidedWizard._check_autoupdate",
+      "line": 5593,
+      "end": 5595
+    },
+    {
+      "name": "GuidedWizard._check_coredump",
+      "line": 5597,
+      "end": 5599
+    },
+    {
+      "name": "GuidedWizard._check_kernel",
+      "line": 5601,
+      "end": 5605
+    },
+    {
+      "name": "GuidedWizard._check_network",
+      "line": 5607,
+      "end": 5616
+    },
+    {
+      "name": "GuidedWizard._check_protocols",
+      "line": 5618,
+      "end": 5620
+    },
+    {
+      "name": "GuidedWizard._check_filesystems",
+      "line": 5622,
+      "end": 5624
+    },
+    {
+      "name": "GuidedWizard._check_dma",
+      "line": 5626,
+      "end": 5628
+    },
+    {
+      "name": "GuidedWizard._check_apparmor",
+      "line": 5630,
+      "end": 5632
+    },
+    {
+      "name": "GuidedWizard._check_cad",
+      "line": 5634,
+      "end": 5638
+    },
+    {
+      "name": "LynisPanel",
+      "line": 5642,
+      "end": 5822
+    },
+    {
+      "name": "LynisPanel.__init__",
+      "line": 5647,
+      "end": 5680
+    },
+    {
+      "name": "LynisPanel._lappend",
+      "line": 5682,
+      "end": 5694
+    },
+    {
+      "name": "LynisPanel._get_sudo_password",
+      "line": 5696,
+      "end": 5704
+    },
+    {
+      "name": "LynisPanel.run_lynis",
+      "line": 5707,
+      "end": 5755
+    },
+    {
+      "name": "LynisPanel._parse_lynis_partial",
+      "line": 5757,
+      "end": 5771
+    },
+    {
+      "name": "LynisPanel._parse_lynis_output",
+      "line": 5773,
+      "end": 5822
+    },
+    {
+      "name": "CvePanel",
+      "line": 5826,
+      "end": 6283
+    },
+    {
+      "name": "CvePanel.__init__",
+      "line": 5839,
+      "end": 5892
+    },
+    {
+      "name": "CvePanel._get_installed_version",
+      "line": 5894,
+      "end": 5906
+    },
+    {
+      "name": "CvePanel.scan_cve",
+      "line": 5909,
+      "end": 6035
+    },
+    {
+      "name": "CvePanel._handle_cve_result",
+      "line": 6037,
+      "end": 6121
+    },
+    {
+      "name": "CvePanel._finish_cve_scan",
+      "line": 6123,
+      "end": 6141
+    },
+    {
+      "name": "CvePanel.cancel_active_scan",
+      "line": 6143,
+      "end": 6149
+    },
+    {
+      "name": "CvePanel.scan_upgrades",
+      "line": 6152,
+      "end": 6223
+    },
+    {
+      "name": "CvePanel._finish_upgrades_scan",
+      "line": 6225,
+      "end": 6232
+    },
+    {
+      "name": "CvePanel._parse_upgrades",
+      "line": 6234,
+      "end": 6283
+    },
+    {
+      "name": "ToolCard",
+      "line": 6287,
+      "end": 6468
+    },
+    {
+      "name": "ToolCard.__init__",
+      "line": 6300,
+      "end": 6363
+    },
+    {
+      "name": "ToolCard._check_installed",
+      "line": 6365,
+      "end": 6374
+    },
+    {
+      "name": "ToolCard._install",
+      "line": 6377,
+      "end": 6412
+    },
+    {
+      "name": "ToolCard._show_how_to_use",
+      "line": 6414,
+      "end": 6441
+    },
+    {
+      "name": "ToolCard._run_tool",
+      "line": 6444,
+      "end": 6468
+    },
+    {
+      "name": "ScheduleScanDialog",
+      "line": 6471,
+      "end": 6635
+    },
+    {
+      "name": "ScheduleScanDialog.__init__",
+      "line": 6483,
+      "end": 6538
+    },
+    {
+      "name": "ScheduleScanDialog._read_current",
+      "line": 6540,
+      "end": 6553
+    },
+    {
+      "name": "ScheduleScanDialog._refresh_current_label",
+      "line": 6555,
+      "end": 6560
+    },
+    {
+      "name": "ScheduleScanDialog._build_line",
+      "line": 6562,
+      "end": 6574
+    },
+    {
+      "name": "ScheduleScanDialog._write_crontab",
+      "line": 6576,
+      "end": 6591
+    },
+    {
+      "name": "ScheduleScanDialog._install",
+      "line": 6593,
+      "end": 6607
+    },
+    {
+      "name": "ScheduleScanDialog._remove",
+      "line": 6609,
+      "end": 6635
+    },
+    {
+      "name": "ToolsPanel",
+      "line": 6638,
+      "end": 6795
+    },
+    {
+      "name": "ToolsPanel.__init__",
+      "line": 6647,
+      "end": 6716
+    },
+    {
+      "name": "ToolsPanel._build_schedule_card",
+      "line": 6718,
+      "end": 6759
+    },
+    {
+      "name": "ToolsPanel._style_cat_buttons",
+      "line": 6761,
+      "end": 6767
+    },
+    {
+      "name": "ToolsPanel._set_category",
+      "line": 6769,
+      "end": 6774
+    },
+    {
+      "name": "ToolsPanel._on_filter_text",
+      "line": 6776,
+      "end": 6778
+    },
+    {
+      "name": "ToolsPanel._apply_filters",
+      "line": 6780,
+      "end": 6795
+    },
+    {
+      "name": "UndoPanel",
+      "line": 6799,
+      "end": 7179
+    },
+    {
+      "name": "UndoPanel.__init__",
+      "line": 6804,
+      "end": 6904
+    },
+    {
+      "name": "UndoPanel._update_empty_state",
+      "line": 6906,
+      "end": 6910
+    },
+    {
+      "name": "UndoPanel._history_error",
+      "line": 6912,
+      "end": 6914
+    },
+    {
+      "name": "UndoPanel._load_previous_sessions",
+      "line": 6916,
+      "end": 6917
+    },
+    {
+      "name": "UndoPanel._change_history_view",
+      "line": 6919,
+      "end": 6921
+    },
+    {
+      "name": "UndoPanel._next_history_page",
+      "line": 6923,
+      "end": 6927
+    },
+    {
+      "name": "UndoPanel._previous_history_page",
+      "line": 6929,
+      "end": 6932
+    },
+    {
+      "name": "UndoPanel._reload_history",
+      "line": 6934,
+      "end": 6968
+    },
+    {
+      "name": "UndoPanel.record_remediation",
+      "line": 6970,
+      "end": 6976
+    },
+    {
+      "name": "UndoPanel.add_live_entry",
+      "line": 6978,
+      "end": 6980
+    },
+    {
+      "name": "UndoPanel._add_row",
+      "line": 6982,
+      "end": 7062
+    },
+    {
+      "name": "UndoPanel._show_detail",
+      "line": 7064,
+      "end": 7084
+    },
+    {
+      "name": "UndoPanel._run_undo",
+      "line": 7087,
+      "end": 7149
+    },
+    {
+      "name": "UndoPanel._undo_worker_failed",
+      "line": 7151,
+      "end": 7157
+    },
+    {
+      "name": "UndoPanel._finish_undo",
+      "line": 7159,
+      "end": 7179
+    },
+    {
+      "name": "SideBar",
+      "line": 7182,
+      "end": 7920
+    },
+    {
+      "name": "SideBar.__init__",
+      "line": 7188,
+      "end": 7304
+    },
+    {
+      "name": "SideBar.changeEvent",
+      "line": 7306,
+      "end": 7319
+    },
+    {
+      "name": "SideBar._mark_active_btn",
+      "line": 7321,
+      "end": 7330
+    },
+    {
+      "name": "SideBar._update_section_header",
+      "line": 7332,
+      "end": 7346
+    },
+    {
+      "name": "SideBar._mark_section_action_done",
+      "line": 7348,
+      "end": 7357
+    },
+    {
+      "name": "SideBar._pre_scan",
+      "line": 7360,
+      "end": 7376
+    },
+    {
+      "name": "SideBar._run_cmd",
+      "line": 7378,
+      "end": 7422
+    },
+    {
+      "name": "SideBar._scan_failed",
+      "line": 7424,
+      "end": 7428
+    },
+    {
+      "name": "SideBar._post_scan_check",
+      "line": 7430,
+      "end": 7436
+    },
+    {
+      "name": "SideBar._scan_unused",
+      "line": 7440,
+      "end": 7444
+    },
+    {
+      "name": "SideBar._do_scan_unused",
+      "line": 7446,
+      "end": 7457
+    },
+    {
+      "name": "SideBar._parse_unused",
+      "line": 7459,
+      "end": 7491
+    },
+    {
+      "name": "SideBar._scan_network",
+      "line": 7495,
+      "end": 7499
+    },
+    {
+      "name": "SideBar._do_scan_network",
+      "line": 7501,
+      "end": 7505
+    },
+    {
+      "name": "SideBar._parse_network",
+      "line": 7507,
+      "end": 7567
+    },
+    {
+      "name": "SideBar._scan_services",
+      "line": 7571,
+      "end": 7575
+    },
+    {
+      "name": "SideBar._do_scan_services",
+      "line": 7577,
+      "end": 7619
+    },
+    {
+      "name": "SideBar._scan_installed",
+      "line": 7623,
+      "end": 7633
+    },
+    {
+      "name": "SideBar._scan_os_installed",
+      "line": 7637,
+      "end": 7684
+    },
+    {
+      "name": "SideBar._scan_user_installed",
+      "line": 7688,
+      "end": 7722
+    },
+    {
+      "name": "SideBar._run_full_scan",
+      "line": 7725,
+      "end": 7727
+    },
+    {
+      "name": "SideBar.run_everything",
+      "line": 7731,
+      "end": 7771
+    },
+    {
+      "name": "SideBar._re_step_done",
+      "line": 7773,
+      "end": 7793
+    },
+    {
+      "name": "SideBar._re_advance",
+      "line": 7795,
+      "end": 7827
+    },
+    {
+      "name": "SideBar._re_finalize",
+      "line": 7829,
+      "end": 7847
+    },
+    {
+      "name": "SideBar._quick_checks",
+      "line": 7851,
+      "end": 7854
+    },
+    {
+      "name": "SideBar._run_lynis",
+      "line": 7857,
+      "end": 7865
+    },
+    {
+      "name": "SideBar._guided_wizard",
+      "line": 7867,
+      "end": 7870
+    },
+    {
+      "name": "SideBar._scan_temperature",
+      "line": 7873,
+      "end": 7879
+    },
+    {
+      "name": "SideBar._scan_drives",
+      "line": 7882,
+      "end": 7888
+    },
+    {
+      "name": "SideBar._scan_cve",
+      "line": 7892,
+      "end": 7898
+    },
+    {
+      "name": "SideBar._scan_upgrades",
+      "line": 7901,
+      "end": 7909
+    },
+    {
+      "name": "SideBar._show_tools",
+      "line": 7912,
+      "end": 7915
+    },
+    {
+      "name": "SideBar._show_undo",
+      "line": 7917,
+      "end": 7920
+    },
+    {
+      "name": "ProfileDialog",
+      "line": 7924,
+      "end": 7975
+    },
+    {
+      "name": "ProfileDialog.__init__",
+      "line": 7928,
+      "end": 7975
+    },
+    {
+      "name": "StartupWizard",
+      "line": 7979,
+      "end": 8191
+    },
+    {
+      "name": "StartupWizard.__init__",
+      "line": 7986,
+      "end": 8023
+    },
+    {
+      "name": "StartupWizard._page_wrapper",
+      "line": 8025,
+      "end": 8043
+    },
+    {
+      "name": "StartupWizard._build_pages",
+      "line": 8045,
+      "end": 8160
+    },
+    {
+      "name": "StartupWizard._go_next",
+      "line": 8162,
+      "end": 8182
+    },
+    {
+      "name": "StartupWizard._go_back",
+      "line": 8184,
+      "end": 8191
+    },
+    {
+      "name": "SessionSummaryDialog",
+      "line": 8195,
+      "end": 8228
+    },
+    {
+      "name": "SessionSummaryDialog.__init__",
+      "line": 8199,
+      "end": 8228
+    },
+    {
+      "name": "RunEverythingSummaryDialog",
+      "line": 8232,
+      "end": 8433
+    },
+    {
+      "name": "RunEverythingSummaryDialog.__init__",
+      "line": 8238,
+      "end": 8347
+    },
+    {
+      "name": "RunEverythingSummaryDialog._verdict_text",
+      "line": 8351,
+      "end": 8352
+    },
+    {
+      "name": "RunEverythingSummaryDialog._split_findings",
+      "line": 8354,
+      "end": 8373
+    },
+    {
+      "name": "RunEverythingSummaryDialog._bucket_column",
+      "line": 8375,
+      "end": 8408
+    },
+    {
+      "name": "RunEverythingSummaryDialog._open_report",
+      "line": 8410,
+      "end": 8433
+    },
+    {
+      "name": "_collect_findings_by_section",
+      "line": 8437,
+      "end": 8463
+    },
+    {
+      "name": "_render_finding_rows",
+      "line": 8467,
+      "end": 8481
+    },
+    {
+      "name": "_build_exec_statement",
+      "line": 8484,
+      "end": 8490
+    },
+    {
+      "name": "generate_report",
+      "line": 8492,
+      "end": 8667
+    },
+    {
+      "name": "WorkspaceRouter",
+      "line": 8670,
+      "end": 8683
+    },
+    {
+      "name": "WorkspaceRouter.__init__",
+      "line": 8672,
+      "end": 8673
+    },
+    {
+      "name": "WorkspaceRouter.setCurrentIndex",
+      "line": 8675,
+      "end": 8683
+    },
+    {
+      "name": "AuditDashboard",
+      "line": 8687,
+      "end": 9326
+    },
+    {
+      "name": "AuditDashboard.__init__",
+      "line": 8690,
+      "end": 8751
+    },
+    {
+      "name": "AuditDashboard._build_workspace",
+      "line": 8755,
+      "end": 8980
+    },
+    {
+      "name": "AuditDashboard._workspace_action",
+      "line": 8982,
+      "end": 8988
+    },
+    {
+      "name": "AuditDashboard._scroll_page",
+      "line": 8991,
+      "end": 8996
+    },
+    {
+      "name": "AuditDashboard._navigate",
+      "line": 8998,
+      "end": 9003
+    },
+    {
+      "name": "AuditDashboard._toggle_activity",
+      "line": 9005,
+      "end": 9012
+    },
+    {
+      "name": "AuditDashboard._refresh_workspace",
+      "line": 9014,
+      "end": 9023
+    },
+    {
+      "name": "AuditDashboard._open_assessment_summary",
+      "line": 9025,
+      "end": 9026
+    },
+    {
+      "name": "AuditDashboard._open_diagnostics",
+      "line": 9028,
+      "end": 9030
+    },
+    {
+      "name": "AuditDashboard._open_scheduler",
+      "line": 9032,
+      "end": 9033
+    },
+    {
+      "name": "AuditDashboard._open_prerequisites",
+      "line": 9035,
+      "end": 9037
+    },
+    {
+      "name": "AuditDashboard._shutdown_busy",
+      "line": 9039,
+      "end": 9043
+    },
+    {
+      "name": "AuditDashboard.closeEvent",
+      "line": 9045,
+      "end": 9081
+    },
+    {
+      "name": "AuditDashboard._check_shutdown",
+      "line": 9083,
+      "end": 9091
+    },
+    {
+      "name": "AuditDashboard._detect_profile",
+      "line": 9094,
+      "end": 9108
+    },
+    {
+      "name": "AuditDashboard._toggle_mode",
+      "line": 9110,
+      "end": 9121
+    },
+    {
+      "name": "AuditDashboard._change_theme",
+      "line": 9123,
+      "end": 9146
+    },
+    {
+      "name": "AuditDashboard._update_theme_lock_button",
+      "line": 9148,
+      "end": 9161
+    },
+    {
+      "name": "AuditDashboard._toggle_theme_lock",
+      "line": 9163,
+      "end": 9177
+    },
+    {
+      "name": "AuditDashboard._change_lang",
+      "line": 9179,
+      "end": 9188
+    },
+    {
+      "name": "AuditDashboard._show_session_summary",
+      "line": 9190,
+      "end": 9192
+    },
+    {
+      "name": "AuditDashboard._run_everything",
+      "line": 9194,
+      "end": 9199
+    },
+    {
+      "name": "AuditDashboard._generate_report",
+      "line": 9201,
+      "end": 9243
+    },
+    {
+      "name": "AuditDashboard._show_code",
+      "line": 9245,
+      "end": 9309
+    },
+    {
+      "name": "AuditDashboard._show_dev_log",
+      "line": 9311,
+      "end": 9326
+    },
+    {
+      "name": "configure_qt_platform_theme",
+      "line": 9329,
+      "end": 9355
+    },
+    {
+      "name": "main",
+      "line": 9359,
+      "end": 9394
+    }
+  ],
+  "python_files": [
+    {
+      "path": "linux-security-dashboard.py",
+      "functions": 385,
+      "classes": 35
+    },
+    {
+      "path": "tests/capture_ui_baseline.py",
+      "functions": 31,
+      "classes": 6
+    },
+    {
+      "path": "tests/test_assessment_coverage.py",
+      "functions": 30,
+      "classes": 2
+    },
+    {
+      "path": "tests/test_assessment_sequence.py",
+      "functions": 51,
+      "classes": 3
+    },
+    {
+      "path": "tests/test_command_outcomes.py",
+      "functions": 21,
+      "classes": 1
+    },
+    {
+      "path": "tests/test_html_reports.py",
+      "functions": 4,
+      "classes": 1
+    },
+    {
+      "path": "tests/test_prerequisites.py",
+      "functions": 32,
+      "classes": 2
+    },
+    {
+      "path": "tests/test_prerequisites_ui.py",
+      "functions": 1,
+      "classes": 1
+    },
+    {
+      "path": "tests/test_qt_platform_theme.py",
+      "functions": 10,
+      "classes": 1
+    },
+    {
+      "path": "tests/test_responsive_findings.py",
+      "functions": 6,
+      "classes": 1
+    },
+    {
+      "path": "tests/test_scan_isolation.py",
+      "functions": 45,
+      "classes": 4
+    },
+    {
+      "path": "tests/test_shutdown_http.py",
+      "functions": 60,
+      "classes": 9
+    },
+    {
+      "path": "tests/test_streaming_execution.py",
+      "functions": 11,
+      "classes": 1
+    },
+    {
+      "path": "tests/test_streaming_outcomes.py",
+      "functions": 14,
+      "classes": 1
+    },
+    {
+      "path": "tests/test_structured_undo.py",
+      "functions": 23,
+      "classes": 2
+    },
+    {
+      "path": "tests/test_ui_foundation.py",
+      "functions": 9,
+      "classes": 1
+    },
+    {
+      "path": "tests/test_undo_history_store.py",
+      "functions": 40,
+      "classes": 1
+    },
+    {
+      "path": "tests/test_undo_persistence_ui.py",
+      "functions": 22,
+      "classes": 1
+    },
+    {
+      "path": "tests/test_workspace_navigation.py",
+      "functions": 2,
+      "classes": 1
+    },
+    {
+      "path": "tests/ui_findings_probe.py",
+      "functions": 7,
+      "classes": 1
+    },
+    {
+      "path": "tests/ui_navigation_probe.py",
+      "functions": 7,
+      "classes": 1
+    },
+    {
+      "path": "tests/ui_prerequisites_probe.py",
+      "functions": 11,
+      "classes": 0
+    }
+  ],
+  "location_basis": "Application definitions and Python file census before consolidated hardening; current changed functions below.",
+  "consolidated_changed_functions": [
+    {
+      "name": "ToolsPanel._style_cat_buttons",
+      "line": 6800
+    },
+    {
+      "name": "build_prerequisite_plan",
+      "line": 722
+    },
+    {
+      "name": "detect_prerequisites",
+      "line": 571
+    },
+    {
+      "name": "execute_prerequisite_plan",
+      "line": 2942
+    },
+    {
+      "name": "generate_report",
+      "line": 8531
+    },
+    {
+      "name": "make_style",
+      "line": 244
+    },
+    {
+      "name": "parse_prerequisite_simulation",
+      "line": 684
+    },
+    {
+      "name": "executable_trust",
+      "line": 552
+    }
+  ],
+  "all_definitions_current": [
+    {
+      "name": "init_logging",
+      "line": 64,
+      "end": 79
+    },
+    {
+      "name": "load_config",
+      "line": 85,
+      "end": 89
+    },
+    {
+      "name": "save_config",
+      "line": 91,
+      "end": 101
+    },
+    {
+      "name": "config_bool",
+      "line": 103,
+      "end": 109
+    },
+    {
+      "name": "get_startup_theme",
+      "line": 111,
+      "end": 122
+    },
+    {
+      "name": "valid_pkg",
+      "line": 127,
+      "end": 129
+    },
+    {
+      "name": "strip_ansi",
+      "line": 133,
+      "end": 135
+    },
+    {
+      "name": "fs",
+      "line": 141,
+      "end": 143
+    },
+    {
+      "name": "apply_theme",
+      "line": 190,
+      "end": 213
+    },
+    {
+      "name": "build_palette",
+      "line": 215,
+      "end": 247
+    },
+    {
+      "name": "make_style",
+      "line": 249,
+      "end": 321
+    },
+    {
+      "name": "ThemeColor",
+      "line": 324,
+      "end": 328
+    },
+    {
+      "name": "ThemeColor.__init__",
+      "line": 326,
+      "end": 326
+    },
+    {
+      "name": "ThemeColor.__str__",
+      "line": 327,
+      "end": 327
+    },
+    {
+      "name": "ThemeColor.__format__",
+      "line": 328,
+      "end": 328
+    },
+    {
+      "name": "theme_value",
+      "line": 331,
+      "end": 336
+    },
+    {
+      "name": "set_theme_style",
+      "line": 339,
+      "end": 342
+    },
+    {
+      "name": "foundation_geometry",
+      "line": 345,
+      "end": 379
+    },
+    {
+      "name": "foundation_toolbar",
+      "line": 382,
+      "end": 413
+    },
+    {
+      "name": "refresh_theme_widgets",
+      "line": 416,
+      "end": 471
+    },
+    {
+      "name": "FoundationEvents",
+      "line": 474,
+      "end": 478
+    },
+    {
+      "name": "FoundationEvents.eventFilter",
+      "line": 475,
+      "end": 478
+    },
+    {
+      "name": "prerequisite_os",
+      "line": 520,
+      "end": 526
+    },
+    {
+      "name": "prerequisite_read",
+      "line": 529,
+      "end": 540
+    },
+    {
+      "name": "prerequisite_candidate",
+      "line": 543,
+      "end": 550
+    },
+    {
+      "name": "prerequisite_rows",
+      "line": 553,
+      "end": 569
+    },
+    {
+      "name": "executable_trust",
+      "line": 572,
+      "end": 588
+    },
+    {
+      "name": "detect_prerequisites",
+      "line": 591,
+      "end": 632
+    },
+    {
+      "name": "prerequisite_apt_state",
+      "line": 635,
+      "end": 678
+    },
+    {
+      "name": "prerequisite_apt_argv",
+      "line": 690,
+      "end": 701
+    },
+    {
+      "name": "parse_prerequisite_simulation",
+      "line": 704,
+      "end": 739
+    },
+    {
+      "name": "build_prerequisite_plan",
+      "line": 742,
+      "end": 769
+    },
+    {
+      "name": "verify_prerequisite_plan",
+      "line": 772,
+      "end": 788
+    },
+    {
+      "name": "prerequisite_redact",
+      "line": 791,
+      "end": 794
+    },
+    {
+      "name": "prerequisite_gate",
+      "line": 797,
+      "end": 819
+    },
+    {
+      "name": "open_prerequisite_scheduler",
+      "line": 823,
+      "end": 830
+    },
+    {
+      "name": "L",
+      "line": 961,
+      "end": 965
+    },
+    {
+      "name": "detect_distro",
+      "line": 968,
+      "end": 984
+    },
+    {
+      "name": "pkg_install",
+      "line": 988,
+      "end": 994
+    },
+    {
+      "name": "pkg_remove",
+      "line": 996,
+      "end": 1003
+    },
+    {
+      "name": "pkg_installed",
+      "line": 1005,
+      "end": 1023
+    },
+    {
+      "name": "coverage_result",
+      "line": 1031,
+      "end": 1032
+    },
+    {
+      "name": "assessment_complete",
+      "line": 1035,
+      "end": 1041
+    },
+    {
+      "name": "assessment_verdict",
+      "line": 1044,
+      "end": 1059
+    },
+    {
+      "name": "assessment_details",
+      "line": 1062,
+      "end": 1079
+    },
+    {
+      "name": "probe_package",
+      "line": 1082,
+      "end": 1112
+    },
+    {
+      "name": "check_update_age",
+      "line": 1115,
+      "end": 1138
+    },
+    {
+      "name": "check_sudo_cached",
+      "line": 1140,
+      "end": 1150
+    },
+    {
+      "name": "timeshift_is_configured",
+      "line": 1152,
+      "end": 1160
+    },
+    {
+      "name": "create_timeshift_snapshot",
+      "line": 1162,
+      "end": 1206
+    },
+    {
+      "name": "has_internet",
+      "line": 1208,
+      "end": 1218
+    },
+    {
+      "name": "get_system_info",
+      "line": 1220,
+      "end": 1292
+    },
+    {
+      "name": "get_system_info._run",
+      "line": 1224,
+      "end": 1231
+    },
+    {
+      "name": "safe_confirmation_buttons",
+      "line": 1294,
+      "end": 1305
+    },
+    {
+      "name": "privileged_question",
+      "line": 1308,
+      "end": 1315
+    },
+    {
+      "name": "prompt_for_sudo_password",
+      "line": 1318,
+      "end": 1338
+    },
+    {
+      "name": "get_rollback_info",
+      "line": 1394,
+      "end": 1408
+    },
+    {
+      "name": "get_face_pixmap",
+      "line": 1547,
+      "end": 1564
+    },
+    {
+      "name": "SessionTracker",
+      "line": 1568,
+      "end": 1654
+    },
+    {
+      "name": "SessionTracker.__init__",
+      "line": 1572,
+      "end": 1580
+    },
+    {
+      "name": "SessionTracker.log_scan",
+      "line": 1582,
+      "end": 1586
+    },
+    {
+      "name": "SessionTracker.log_action",
+      "line": 1588,
+      "end": 1590
+    },
+    {
+      "name": "SessionTracker.build_summary",
+      "line": 1592,
+      "end": 1654
+    },
+    {
+      "name": "RiskTracker",
+      "line": 1660,
+      "end": 1697
+    },
+    {
+      "name": "RiskTracker.__init__",
+      "line": 1664,
+      "end": 1666
+    },
+    {
+      "name": "RiskTracker.add",
+      "line": 1668,
+      "end": 1670
+    },
+    {
+      "name": "RiskTracker.remove_entry",
+      "line": 1672,
+      "end": 1677
+    },
+    {
+      "name": "RiskTracker.clear",
+      "line": 1679,
+      "end": 1681
+    },
+    {
+      "name": "RiskTracker.score",
+      "line": 1683,
+      "end": 1688
+    },
+    {
+      "name": "RiskTracker.label",
+      "line": 1690,
+      "end": 1697
+    },
+    {
+      "name": "build_undo_argv",
+      "line": 1717,
+      "end": 1751
+    },
+    {
+      "name": "make_undo_operation",
+      "line": 1754,
+      "end": 1778
+    },
+    {
+      "name": "make_undo_cmd",
+      "line": 1781,
+      "end": 1786
+    },
+    {
+      "name": "normalize_undo_record",
+      "line": 1794,
+      "end": 1807
+    },
+    {
+      "name": "undo_presentation",
+      "line": 1810,
+      "end": 1835
+    },
+    {
+      "name": "save_undo_entry",
+      "line": 1838,
+      "end": 1854
+    },
+    {
+      "name": "load_undo_log",
+      "line": 1857,
+      "end": 1896
+    },
+    {
+      "name": "UndoHistoryError",
+      "line": 1898,
+      "end": 1899
+    },
+    {
+      "name": "UndoHistoryStore",
+      "line": 1902,
+      "end": 2253
+    },
+    {
+      "name": "UndoHistoryStore.__init__",
+      "line": 1958,
+      "end": 1967
+    },
+    {
+      "name": "UndoHistoryStore._id",
+      "line": 1970,
+      "end": 1979
+    },
+    {
+      "name": "UndoHistoryStore._now",
+      "line": 1982,
+      "end": 1983
+    },
+    {
+      "name": "UndoHistoryStore._check_stat",
+      "line": 1986,
+      "end": 1992
+    },
+    {
+      "name": "UndoHistoryStore._open_directory",
+      "line": 1994,
+      "end": 2020
+    },
+    {
+      "name": "UndoHistoryStore._check_files",
+      "line": 2022,
+      "end": 2033
+    },
+    {
+      "name": "UndoHistoryStore._check_schema",
+      "line": 2035,
+      "end": 2046
+    },
+    {
+      "name": "UndoHistoryStore._connection",
+      "line": 2049,
+      "end": 2115
+    },
+    {
+      "name": "UndoHistoryStore._transaction",
+      "line": 2119,
+      "end": 2127
+    },
+    {
+      "name": "UndoHistoryStore._event",
+      "line": 2129,
+      "end": 2132
+    },
+    {
+      "name": "UndoHistoryStore.create",
+      "line": 2134,
+      "end": 2151
+    },
+    {
+      "name": "UndoHistoryStore._decode",
+      "line": 2153,
+      "end": 2168
+    },
+    {
+      "name": "UndoHistoryStore.get",
+      "line": 2170,
+      "end": 2177
+    },
+    {
+      "name": "UndoHistoryStore.claim",
+      "line": 2179,
+      "end": 2200
+    },
+    {
+      "name": "UndoHistoryStore.finish",
+      "line": 2202,
+      "end": 2217
+    },
+    {
+      "name": "UndoHistoryStore.page",
+      "line": 2219,
+      "end": 2238
+    },
+    {
+      "name": "UndoHistoryStore.events",
+      "line": 2240,
+      "end": 2253
+    },
+    {
+      "name": "CommandWorker",
+      "line": 2261,
+      "end": 2365
+    },
+    {
+      "name": "CommandWorker.__init__",
+      "line": 2274,
+      "end": 2281
+    },
+    {
+      "name": "CommandWorker.run",
+      "line": 2283,
+      "end": 2365
+    },
+    {
+      "name": "StreamingCommandWorker",
+      "line": 2368,
+      "end": 2541
+    },
+    {
+      "name": "StreamingCommandWorker.__init__",
+      "line": 2384,
+      "end": 2390
+    },
+    {
+      "name": "StreamingCommandWorker._emit_progress",
+      "line": 2392,
+      "end": 2400
+    },
+    {
+      "name": "StreamingCommandWorker._collect_output",
+      "line": 2402,
+      "end": 2463
+    },
+    {
+      "name": "StreamingCommandWorker._cleanup_child",
+      "line": 2465,
+      "end": 2480
+    },
+    {
+      "name": "StreamingCommandWorker.run",
+      "line": 2482,
+      "end": 2541
+    },
+    {
+      "name": "HttpWorker",
+      "line": 2544,
+      "end": 2645
+    },
+    {
+      "name": "HttpWorker.__init__",
+      "line": 2553,
+      "end": 2557
+    },
+    {
+      "name": "HttpWorker.cancel",
+      "line": 2559,
+      "end": 2561
+    },
+    {
+      "name": "HttpWorker._classify_error",
+      "line": 2563,
+      "end": 2577
+    },
+    {
+      "name": "HttpWorker._request_url",
+      "line": 2599,
+      "end": 2601
+    },
+    {
+      "name": "HttpWorker._fetch",
+      "line": 2603,
+      "end": 2616
+    },
+    {
+      "name": "HttpWorker.run",
+      "line": 2618,
+      "end": 2645
+    },
+    {
+      "name": "ScanOwnership",
+      "line": 2648,
+      "end": 2685
+    },
+    {
+      "name": "ScanOwnership.__init__",
+      "line": 2650,
+      "end": 2655
+    },
+    {
+      "name": "ScanOwnership.enter",
+      "line": 2657,
+      "end": 2669
+    },
+    {
+      "name": "ScanOwnership.leave",
+      "line": 2671,
+      "end": 2674
+    },
+    {
+      "name": "ScanOwnership.retire",
+      "line": 2676,
+      "end": 2681
+    },
+    {
+      "name": "ScanOwnership._release",
+      "line": 2683,
+      "end": 2685
+    },
+    {
+      "name": "scan_owner",
+      "line": 2688,
+      "end": 2692
+    },
+    {
+      "name": "scan_join",
+      "line": 2695,
+      "end": 2697
+    },
+    {
+      "name": "scan_operation",
+      "line": 2700,
+      "end": 2793
+    },
+    {
+      "name": "scan_operation.operation",
+      "line": 2703,
+      "end": 2792
+    },
+    {
+      "name": "scan_operation.operation.cleanup",
+      "line": 2725,
+      "end": 2732
+    },
+    {
+      "name": "scan_operation.operation.restore_coverage",
+      "line": 2766,
+      "end": 2768
+    },
+    {
+      "name": "scan_operation.operation.abort_unstarted_run",
+      "line": 2777,
+      "end": 2781
+    },
+    {
+      "name": "bind_scan_worker",
+      "line": 2796,
+      "end": 2803
+    },
+    {
+      "name": "scan_slot",
+      "line": 2806,
+      "end": 2830
+    },
+    {
+      "name": "scan_slot.apply",
+      "line": 2809,
+      "end": 2829
+    },
+    {
+      "name": "WorkerMixin",
+      "line": 2834,
+      "end": 2966
+    },
+    {
+      "name": "WorkerMixin._init_workers",
+      "line": 2839,
+      "end": 2842
+    },
+    {
+      "name": "WorkerMixin._start_worker",
+      "line": 2844,
+      "end": 2901
+    },
+    {
+      "name": "WorkerMixin._start_worker.attempt",
+      "line": 2850,
+      "end": 2857
+    },
+    {
+      "name": "WorkerMixin._start_worker.discard",
+      "line": 2858,
+      "end": 2862
+    },
+    {
+      "name": "WorkerMixin._start_worker.delete",
+      "line": 2863,
+      "end": 2866
+    },
+    {
+      "name": "WorkerMixin._start_worker.retire",
+      "line": 2867,
+      "end": 2872
+    },
+    {
+      "name": "WorkerMixin._start_assessment_worker",
+      "line": 2903,
+      "end": 2957
+    },
+    {
+      "name": "WorkerMixin._start_assessment_worker.report",
+      "line": 2914,
+      "end": 2928
+    },
+    {
+      "name": "WorkerMixin._start_assessment_worker.finished",
+      "line": 2929,
+      "end": 2931
+    },
+    {
+      "name": "WorkerMixin._stop_all_workers",
+      "line": 2959,
+      "end": 2961
+    },
+    {
+      "name": "WorkerMixin._any_running",
+      "line": 2964,
+      "end": 2966
+    },
+    {
+      "name": "PrerequisiteJob",
+      "line": 2969,
+      "end": 2983
+    },
+    {
+      "name": "PrerequisiteJob.__init__",
+      "line": 2972,
+      "end": 2976
+    },
+    {
+      "name": "PrerequisiteJob.run",
+      "line": 2977,
+      "end": 2983
+    },
+    {
+      "name": "execute_prerequisite_plan",
+      "line": 2986,
+      "end": 3065
+    },
+    {
+      "name": "PrerequisitesPanel",
+      "line": 3068,
+      "end": 3330
+    },
+    {
+      "name": "PrerequisitesPanel.__init__",
+      "line": 3070,
+      "end": 3109
+    },
+    {
+      "name": "PrerequisitesPanel.selected_packages",
+      "line": 3111,
+      "end": 3113
+    },
+    {
+      "name": "PrerequisitesPanel._selection_changed",
+      "line": 3115,
+      "end": 3116
+    },
+    {
+      "name": "PrerequisitesPanel._render",
+      "line": 3118,
+      "end": 3157
+    },
+    {
+      "name": "PrerequisitesPanel._launch",
+      "line": 3159,
+      "end": 3203
+    },
+    {
+      "name": "PrerequisitesPanel._launch.finished",
+      "line": 3162,
+      "end": 3181
+    },
+    {
+      "name": "PrerequisitesPanel.refresh",
+      "line": 3205,
+      "end": 3227
+    },
+    {
+      "name": "PrerequisitesPanel.refresh.done",
+      "line": 3219,
+      "end": 3226
+    },
+    {
+      "name": "PrerequisitesPanel.install",
+      "line": 3230,
+      "end": 3319
+    },
+    {
+      "name": "PrerequisitesPanel.install.failed",
+      "line": 3244,
+      "end": 3247
+    },
+    {
+      "name": "PrerequisitesPanel.install.preview",
+      "line": 3248,
+      "end": 3318
+    },
+    {
+      "name": "PrerequisitesPanel.install.preview.transaction",
+      "line": 3294,
+      "end": 3295
+    },
+    {
+      "name": "PrerequisitesPanel.install.preview.installed",
+      "line": 3296,
+      "end": 3317
+    },
+    {
+      "name": "PrerequisitesPanel.install.preview.installed.verified",
+      "line": 3303,
+      "end": 3316
+    },
+    {
+      "name": "PrerequisitesPanel._receive_progress",
+      "line": 3321,
+      "end": 3323
+    },
+    {
+      "name": "PrerequisitesPanel.terminal_progress",
+      "line": 3325,
+      "end": 3328
+    },
+    {
+      "name": "ArrowSplitterHandle",
+      "line": 3335,
+      "end": 3348
+    },
+    {
+      "name": "ArrowSplitterHandle.paintEvent",
+      "line": 3337,
+      "end": 3348
+    },
+    {
+      "name": "CueSplitter",
+      "line": 3351,
+      "end": 3354
+    },
+    {
+      "name": "CueSplitter.createHandle",
+      "line": 3353,
+      "end": 3354
+    },
+    {
+      "name": "TerminalPanel",
+      "line": 3358,
+      "end": 3448
+    },
+    {
+      "name": "TerminalPanel._clear_output",
+      "line": 3364,
+      "end": 3365
+    },
+    {
+      "name": "TerminalPanel.__init__",
+      "line": 3367,
+      "end": 3403
+    },
+    {
+      "name": "TerminalPanel._adjust_font",
+      "line": 3405,
+      "end": 3411
+    },
+    {
+      "name": "TerminalPanel.append",
+      "line": 3413,
+      "end": 3427
+    },
+    {
+      "name": "TerminalPanel.append_cmd",
+      "line": 3430,
+      "end": 3432
+    },
+    {
+      "name": "TerminalPanel.append_ok",
+      "line": 3434,
+      "end": 3436
+    },
+    {
+      "name": "TerminalPanel.append_err",
+      "line": 3438,
+      "end": 3440
+    },
+    {
+      "name": "TerminalPanel.append_warn",
+      "line": 3442,
+      "end": 3444
+    },
+    {
+      "name": "TerminalPanel.append_info",
+      "line": 3446,
+      "end": 3448
+    },
+    {
+      "name": "RiskScorePanel",
+      "line": 3452,
+      "end": 3589
+    },
+    {
+      "name": "RiskScorePanel.__init__",
+      "line": 3457,
+      "end": 3510
+    },
+    {
+      "name": "RiskScorePanel.update_face",
+      "line": 3512,
+      "end": 3515
+    },
+    {
+      "name": "RiskScorePanel.update_score",
+      "line": 3517,
+      "end": 3533
+    },
+    {
+      "name": "RiskScorePanel.bind_findings",
+      "line": 3535,
+      "end": 3537
+    },
+    {
+      "name": "RiskScorePanel._section_scores",
+      "line": 3539,
+      "end": 3575
+    },
+    {
+      "name": "RiskScorePanel.set_profile",
+      "line": 3577,
+      "end": 3581
+    },
+    {
+      "name": "RiskScorePanel._check_update_age",
+      "line": 3583,
+      "end": 3589
+    },
+    {
+      "name": "PreActionDialog",
+      "line": 3593,
+      "end": 3682
+    },
+    {
+      "name": "PreActionDialog.__init__",
+      "line": 3598,
+      "end": 3682
+    },
+    {
+      "name": "ExplainDialog",
+      "line": 3757,
+      "end": 3862
+    },
+    {
+      "name": "ExplainDialog.__init__",
+      "line": 3761,
+      "end": 3862
+    },
+    {
+      "name": "ResponsiveFindingsTable",
+      "line": 3865,
+      "end": 3965
+    },
+    {
+      "name": "ResponsiveFindingsTable.__init__",
+      "line": 3867,
+      "end": 3879
+    },
+    {
+      "name": "ResponsiveFindingsTable.schedule_fit",
+      "line": 3881,
+      "end": 3884
+    },
+    {
+      "name": "ResponsiveFindingsTable.setCellWidget",
+      "line": 3886,
+      "end": 3891
+    },
+    {
+      "name": "ResponsiveFindingsTable.removeCellWidget",
+      "line": 3893,
+      "end": 3896
+    },
+    {
+      "name": "ResponsiveFindingsTable._watch_action_widget",
+      "line": 3898,
+      "end": 3901
+    },
+    {
+      "name": "ResponsiveFindingsTable.eventFilter",
+      "line": 3903,
+      "end": 3908
+    },
+    {
+      "name": "ResponsiveFindingsTable.changeEvent",
+      "line": 3910,
+      "end": 3914
+    },
+    {
+      "name": "ResponsiveFindingsTable._recalculate_minimums",
+      "line": 3916,
+      "end": 3932
+    },
+    {
+      "name": "ResponsiveFindingsTable.resizeEvent",
+      "line": 3934,
+      "end": 3936
+    },
+    {
+      "name": "ResponsiveFindingsTable.fit_columns",
+      "line": 3938,
+      "end": 3956
+    },
+    {
+      "name": "ResponsiveFindingsTable.viewportEvent",
+      "line": 3958,
+      "end": 3965
+    },
+    {
+      "name": "FindingsTable",
+      "line": 3969,
+      "end": 4539
+    },
+    {
+      "name": "FindingsTable.__init__",
+      "line": 3981,
+      "end": 4061
+    },
+    {
+      "name": "FindingsTable._risk_display",
+      "line": 4066,
+      "end": 4074
+    },
+    {
+      "name": "FindingsTable._risk_colour",
+      "line": 4076,
+      "end": 4081
+    },
+    {
+      "name": "FindingsTable._get_tag",
+      "line": 4083,
+      "end": 4105
+    },
+    {
+      "name": "FindingsTable._is_duplicate",
+      "line": 4107,
+      "end": 4110
+    },
+    {
+      "name": "FindingsTable._drop_seen_name",
+      "line": 4112,
+      "end": 4114
+    },
+    {
+      "name": "FindingsTable._apply_ok_banner_style",
+      "line": 4116,
+      "end": 4118
+    },
+    {
+      "name": "FindingsTable.refresh_theme_styles",
+      "line": 4120,
+      "end": 4122
+    },
+    {
+      "name": "FindingsTable._build_action_cell",
+      "line": 4124,
+      "end": 4186
+    },
+    {
+      "name": "FindingsTable.begin_bulk_update",
+      "line": 4188,
+      "end": 4192
+    },
+    {
+      "name": "FindingsTable.end_bulk_update",
+      "line": 4194,
+      "end": 4203
+    },
+    {
+      "name": "FindingsTable.add_finding",
+      "line": 4205,
+      "end": 4272
+    },
+    {
+      "name": "FindingsTable._sort_by_risk",
+      "line": 4274,
+      "end": 4345
+    },
+    {
+      "name": "FindingsTable._ignore",
+      "line": 4348,
+      "end": 4366
+    },
+    {
+      "name": "FindingsTable._on_double_click",
+      "line": 4368,
+      "end": 4374
+    },
+    {
+      "name": "FindingsTable._act",
+      "line": 4377,
+      "end": 4436
+    },
+    {
+      "name": "FindingsTable._verify",
+      "line": 4438,
+      "end": 4483
+    },
+    {
+      "name": "FindingsTable._remove_finding_and_update_score",
+      "line": 4485,
+      "end": 4496
+    },
+    {
+      "name": "FindingsTable.clear_findings",
+      "line": 4499,
+      "end": 4509
+    },
+    {
+      "name": "FindingsTable.set_assessment_coverage",
+      "line": 4511,
+      "end": 4514
+    },
+    {
+      "name": "FindingsTable.show_all_ok_banner",
+      "line": 4516,
+      "end": 4523
+    },
+    {
+      "name": "FindingsTable.hide_all_ok_banner",
+      "line": 4525,
+      "end": 4527
+    },
+    {
+      "name": "FindingsTable._filter_rows",
+      "line": 4529,
+      "end": 4539
+    },
+    {
+      "name": "detect_profile",
+      "line": 4592,
+      "end": 4625
+    },
+    {
+      "name": "run_quick_checks",
+      "line": 4629,
+      "end": 4772
+    },
+    {
+      "name": "run_temperature_check",
+      "line": 4790,
+      "end": 4913
+    },
+    {
+      "name": "_list_physical_drives",
+      "line": 4925,
+      "end": 4946
+    },
+    {
+      "name": "run_drive_health_check",
+      "line": 4948,
+      "end": 5058
+    },
+    {
+      "name": "GuidedWizard",
+      "line": 5062,
+      "end": 5725
+    },
+    {
+      "name": "GuidedWizard.done",
+      "line": 5067,
+      "end": 5071
+    },
+    {
+      "name": "GuidedWizard.closeEvent",
+      "line": 5073,
+      "end": 5078
+    },
+    {
+      "name": "GuidedWizard.__init__",
+      "line": 5080,
+      "end": 5223
+    },
+    {
+      "name": "GuidedWizard._on_item_clicked",
+      "line": 5225,
+      "end": 5228
+    },
+    {
+      "name": "GuidedWizard._show_fix_detail",
+      "line": 5230,
+      "end": 5260
+    },
+    {
+      "name": "GuidedWizard._refresh_fix_statuses",
+      "line": 5262,
+      "end": 5271
+    },
+    {
+      "name": "GuidedWizard._run_fix",
+      "line": 5274,
+      "end": 5325
+    },
+    {
+      "name": "GuidedWizard._run_next_fix_cmd",
+      "line": 5327,
+      "end": 5411
+    },
+    {
+      "name": "GuidedWizard._run_next_fix_cmd.finish",
+      "line": 5347,
+      "end": 5368
+    },
+    {
+      "name": "GuidedWizard._run_next_fix_cmd.outcome",
+      "line": 5369,
+      "end": 5372
+    },
+    {
+      "name": "GuidedWizard._run_next_fix_cmd.finished",
+      "line": 5373,
+      "end": 5378
+    },
+    {
+      "name": "GuidedWizard._fix_failed",
+      "line": 5413,
+      "end": 5425
+    },
+    {
+      "name": "GuidedWizard._fix_ufw",
+      "line": 5428,
+      "end": 5438
+    },
+    {
+      "name": "GuidedWizard._fix_fail2ban",
+      "line": 5440,
+      "end": 5449
+    },
+    {
+      "name": "GuidedWizard._fix_ssh",
+      "line": 5451,
+      "end": 5499
+    },
+    {
+      "name": "GuidedWizard._fix_autoupdate",
+      "line": 5501,
+      "end": 5508
+    },
+    {
+      "name": "GuidedWizard._fix_coredump",
+      "line": 5510,
+      "end": 5517
+    },
+    {
+      "name": "GuidedWizard._fix_kernel",
+      "line": 5519,
+      "end": 5531
+    },
+    {
+      "name": "GuidedWizard._fix_network",
+      "line": 5533,
+      "end": 5560
+    },
+    {
+      "name": "GuidedWizard._fix_protocols",
+      "line": 5562,
+      "end": 5571
+    },
+    {
+      "name": "GuidedWizard._fix_filesystems",
+      "line": 5573,
+      "end": 5582
+    },
+    {
+      "name": "GuidedWizard._fix_dma",
+      "line": 5584,
+      "end": 5594
+    },
+    {
+      "name": "GuidedWizard._fix_apparmor",
+      "line": 5596,
+      "end": 5608
+    },
+    {
+      "name": "GuidedWizard._fix_cad",
+      "line": 5610,
+      "end": 5616
+    },
+    {
+      "name": "GuidedWizard._run_check",
+      "line": 5620,
+      "end": 5626
+    },
+    {
+      "name": "GuidedWizard._check_ufw",
+      "line": 5628,
+      "end": 5632
+    },
+    {
+      "name": "GuidedWizard._check_fail2ban",
+      "line": 5634,
+      "end": 5636
+    },
+    {
+      "name": "GuidedWizard._check_ssh",
+      "line": 5638,
+      "end": 5652
+    },
+    {
+      "name": "GuidedWizard._find_sshd_config",
+      "line": 5655,
+      "end": 5660
+    },
+    {
+      "name": "GuidedWizard._detect_ssh_service_name",
+      "line": 5663,
+      "end": 5678
+    },
+    {
+      "name": "GuidedWizard._detect_ssh_service_name._loaded",
+      "line": 5665,
+      "end": 5673
+    },
+    {
+      "name": "GuidedWizard._check_autoupdate",
+      "line": 5680,
+      "end": 5682
+    },
+    {
+      "name": "GuidedWizard._check_coredump",
+      "line": 5684,
+      "end": 5686
+    },
+    {
+      "name": "GuidedWizard._check_kernel",
+      "line": 5688,
+      "end": 5692
+    },
+    {
+      "name": "GuidedWizard._check_network",
+      "line": 5694,
+      "end": 5703
+    },
+    {
+      "name": "GuidedWizard._check_protocols",
+      "line": 5705,
+      "end": 5707
+    },
+    {
+      "name": "GuidedWizard._check_filesystems",
+      "line": 5709,
+      "end": 5711
+    },
+    {
+      "name": "GuidedWizard._check_dma",
+      "line": 5713,
+      "end": 5715
+    },
+    {
+      "name": "GuidedWizard._check_apparmor",
+      "line": 5717,
+      "end": 5719
+    },
+    {
+      "name": "GuidedWizard._check_cad",
+      "line": 5721,
+      "end": 5725
+    },
+    {
+      "name": "LynisPanel",
+      "line": 5729,
+      "end": 5909
+    },
+    {
+      "name": "LynisPanel.__init__",
+      "line": 5734,
+      "end": 5767
+    },
+    {
+      "name": "LynisPanel._lappend",
+      "line": 5769,
+      "end": 5781
+    },
+    {
+      "name": "LynisPanel._get_sudo_password",
+      "line": 5783,
+      "end": 5791
+    },
+    {
+      "name": "LynisPanel.run_lynis",
+      "line": 5794,
+      "end": 5842
+    },
+    {
+      "name": "LynisPanel.run_lynis.audited",
+      "line": 5819,
+      "end": 5840
+    },
+    {
+      "name": "LynisPanel._parse_lynis_partial",
+      "line": 5844,
+      "end": 5858
+    },
+    {
+      "name": "LynisPanel._parse_lynis_output",
+      "line": 5860,
+      "end": 5909
+    },
+    {
+      "name": "CvePanel",
+      "line": 5913,
+      "end": 6370
+    },
+    {
+      "name": "CvePanel.__init__",
+      "line": 5926,
+      "end": 5979
+    },
+    {
+      "name": "CvePanel._get_installed_version",
+      "line": 5981,
+      "end": 5993
+    },
+    {
+      "name": "CvePanel.scan_cve",
+      "line": 5996,
+      "end": 6122
+    },
+    {
+      "name": "CvePanel.scan_cve.on_terminal",
+      "line": 6008,
+      "end": 6016
+    },
+    {
+      "name": "CvePanel.scan_cve.result",
+      "line": 6081,
+      "end": 6089
+    },
+    {
+      "name": "CvePanel.scan_cve.finish_summary",
+      "line": 6094,
+      "end": 6099
+    },
+    {
+      "name": "CvePanel.scan_cve.terminal",
+      "line": 6104,
+      "end": 6116
+    },
+    {
+      "name": "CvePanel._handle_cve_result",
+      "line": 6124,
+      "end": 6208
+    },
+    {
+      "name": "CvePanel._finish_cve_scan",
+      "line": 6210,
+      "end": 6228
+    },
+    {
+      "name": "CvePanel.cancel_active_scan",
+      "line": 6230,
+      "end": 6236
+    },
+    {
+      "name": "CvePanel.scan_upgrades",
+      "line": 6239,
+      "end": 6310
+    },
+    {
+      "name": "CvePanel.scan_upgrades.on_terminal",
+      "line": 6252,
+      "end": 6257
+    },
+    {
+      "name": "CvePanel.scan_upgrades.parse",
+      "line": 6283,
+      "end": 6290
+    },
+    {
+      "name": "CvePanel.scan_upgrades.terminal",
+      "line": 6299,
+      "end": 6305
+    },
+    {
+      "name": "CvePanel._finish_upgrades_scan",
+      "line": 6312,
+      "end": 6319
+    },
+    {
+      "name": "CvePanel._parse_upgrades",
+      "line": 6321,
+      "end": 6370
+    },
+    {
+      "name": "ToolCard",
+      "line": 6374,
+      "end": 6554
+    },
+    {
+      "name": "ToolCard.__init__",
+      "line": 6387,
+      "end": 6450
+    },
+    {
+      "name": "ToolCard._check_installed",
+      "line": 6452,
+      "end": 6461
+    },
+    {
+      "name": "ToolCard._install",
+      "line": 6464,
+      "end": 6498
+    },
+    {
+      "name": "ToolCard._show_how_to_use",
+      "line": 6500,
+      "end": 6527
+    },
+    {
+      "name": "ToolCard._run_tool",
+      "line": 6530,
+      "end": 6554
+    },
+    {
+      "name": "ScheduleScanDialog",
+      "line": 6557,
+      "end": 6721
+    },
+    {
+      "name": "ScheduleScanDialog.__init__",
+      "line": 6569,
+      "end": 6624
+    },
+    {
+      "name": "ScheduleScanDialog._read_current",
+      "line": 6626,
+      "end": 6639
+    },
+    {
+      "name": "ScheduleScanDialog._refresh_current_label",
+      "line": 6641,
+      "end": 6646
+    },
+    {
+      "name": "ScheduleScanDialog._build_line",
+      "line": 6648,
+      "end": 6660
+    },
+    {
+      "name": "ScheduleScanDialog._write_crontab",
+      "line": 6662,
+      "end": 6677
+    },
+    {
+      "name": "ScheduleScanDialog._install",
+      "line": 6679,
+      "end": 6693
+    },
+    {
+      "name": "ScheduleScanDialog._remove",
+      "line": 6695,
+      "end": 6721
+    },
+    {
+      "name": "ToolsPanel",
+      "line": 6724,
+      "end": 6881
+    },
+    {
+      "name": "ToolsPanel.__init__",
+      "line": 6733,
+      "end": 6802
+    },
+    {
+      "name": "ToolsPanel._build_schedule_card",
+      "line": 6804,
+      "end": 6845
+    },
+    {
+      "name": "ToolsPanel._style_cat_buttons",
+      "line": 6847,
+      "end": 6853
+    },
+    {
+      "name": "ToolsPanel._set_category",
+      "line": 6855,
+      "end": 6860
+    },
+    {
+      "name": "ToolsPanel._on_filter_text",
+      "line": 6862,
+      "end": 6864
+    },
+    {
+      "name": "ToolsPanel._apply_filters",
+      "line": 6866,
+      "end": 6881
+    },
+    {
+      "name": "UndoPanel",
+      "line": 6885,
+      "end": 7264
+    },
+    {
+      "name": "UndoPanel.__init__",
+      "line": 6890,
+      "end": 6990
+    },
+    {
+      "name": "UndoPanel._update_empty_state",
+      "line": 6992,
+      "end": 6996
+    },
+    {
+      "name": "UndoPanel._history_error",
+      "line": 6998,
+      "end": 7000
+    },
+    {
+      "name": "UndoPanel._load_previous_sessions",
+      "line": 7002,
+      "end": 7003
+    },
+    {
+      "name": "UndoPanel._change_history_view",
+      "line": 7005,
+      "end": 7007
+    },
+    {
+      "name": "UndoPanel._next_history_page",
+      "line": 7009,
+      "end": 7013
+    },
+    {
+      "name": "UndoPanel._previous_history_page",
+      "line": 7015,
+      "end": 7018
+    },
+    {
+      "name": "UndoPanel._reload_history",
+      "line": 7020,
+      "end": 7054
+    },
+    {
+      "name": "UndoPanel.record_remediation",
+      "line": 7056,
+      "end": 7062
+    },
+    {
+      "name": "UndoPanel.add_live_entry",
+      "line": 7064,
+      "end": 7066
+    },
+    {
+      "name": "UndoPanel._add_row",
+      "line": 7068,
+      "end": 7148
+    },
+    {
+      "name": "UndoPanel._show_detail",
+      "line": 7150,
+      "end": 7170
+    },
+    {
+      "name": "UndoPanel._run_undo",
+      "line": 7173,
+      "end": 7234
+    },
+    {
+      "name": "UndoPanel._undo_worker_failed",
+      "line": 7236,
+      "end": 7242
+    },
+    {
+      "name": "UndoPanel._finish_undo",
+      "line": 7244,
+      "end": 7264
+    },
+    {
+      "name": "SideBar",
+      "line": 7267,
+      "end": 8005
+    },
+    {
+      "name": "SideBar.__init__",
+      "line": 7273,
+      "end": 7389
+    },
+    {
+      "name": "SideBar.changeEvent",
+      "line": 7391,
+      "end": 7404
+    },
+    {
+      "name": "SideBar._mark_active_btn",
+      "line": 7406,
+      "end": 7415
+    },
+    {
+      "name": "SideBar._update_section_header",
+      "line": 7417,
+      "end": 7431
+    },
+    {
+      "name": "SideBar._mark_section_action_done",
+      "line": 7433,
+      "end": 7442
+    },
+    {
+      "name": "SideBar._pre_scan",
+      "line": 7445,
+      "end": 7461
+    },
+    {
+      "name": "SideBar._run_cmd",
+      "line": 7463,
+      "end": 7507
+    },
+    {
+      "name": "SideBar._run_cmd.on_terminal",
+      "line": 7466,
+      "end": 7471
+    },
+    {
+      "name": "SideBar._run_cmd.parse",
+      "line": 7481,
+      "end": 7488
+    },
+    {
+      "name": "SideBar._scan_failed",
+      "line": 7509,
+      "end": 7513
+    },
+    {
+      "name": "SideBar._post_scan_check",
+      "line": 7515,
+      "end": 7521
+    },
+    {
+      "name": "SideBar._scan_unused",
+      "line": 7525,
+      "end": 7529
+    },
+    {
+      "name": "SideBar._do_scan_unused",
+      "line": 7531,
+      "end": 7542
+    },
+    {
+      "name": "SideBar._parse_unused",
+      "line": 7544,
+      "end": 7576
+    },
+    {
+      "name": "SideBar._scan_network",
+      "line": 7580,
+      "end": 7584
+    },
+    {
+      "name": "SideBar._do_scan_network",
+      "line": 7586,
+      "end": 7590
+    },
+    {
+      "name": "SideBar._parse_network",
+      "line": 7592,
+      "end": 7652
+    },
+    {
+      "name": "SideBar._scan_services",
+      "line": 7656,
+      "end": 7660
+    },
+    {
+      "name": "SideBar._do_scan_services",
+      "line": 7662,
+      "end": 7704
+    },
+    {
+      "name": "SideBar._scan_installed",
+      "line": 7708,
+      "end": 7718
+    },
+    {
+      "name": "SideBar._scan_os_installed",
+      "line": 7722,
+      "end": 7769
+    },
+    {
+      "name": "SideBar._scan_os_installed._parse_os",
+      "line": 7732,
+      "end": 7760
+    },
+    {
+      "name": "SideBar._scan_user_installed",
+      "line": 7773,
+      "end": 7807
+    },
+    {
+      "name": "SideBar._scan_user_installed._parse_user",
+      "line": 7783,
+      "end": 7799
+    },
+    {
+      "name": "SideBar._run_full_scan",
+      "line": 7810,
+      "end": 7812
+    },
+    {
+      "name": "SideBar.run_everything",
+      "line": 7816,
+      "end": 7856
+    },
+    {
+      "name": "SideBar.run_everything.synchronous",
+      "line": 7826,
+      "end": 7827
+    },
+    {
+      "name": "SideBar._re_step_done",
+      "line": 7858,
+      "end": 7878
+    },
+    {
+      "name": "SideBar._re_advance",
+      "line": 7880,
+      "end": 7912
+    },
+    {
+      "name": "SideBar._re_finalize",
+      "line": 7914,
+      "end": 7932
+    },
+    {
+      "name": "SideBar._quick_checks",
+      "line": 7936,
+      "end": 7939
+    },
+    {
+      "name": "SideBar._run_lynis",
+      "line": 7942,
+      "end": 7950
+    },
+    {
+      "name": "SideBar._guided_wizard",
+      "line": 7952,
+      "end": 7955
+    },
+    {
+      "name": "SideBar._scan_temperature",
+      "line": 7958,
+      "end": 7964
+    },
+    {
+      "name": "SideBar._scan_drives",
+      "line": 7967,
+      "end": 7973
+    },
+    {
+      "name": "SideBar._scan_cve",
+      "line": 7977,
+      "end": 7983
+    },
+    {
+      "name": "SideBar._scan_upgrades",
+      "line": 7986,
+      "end": 7994
+    },
+    {
+      "name": "SideBar._show_tools",
+      "line": 7997,
+      "end": 8000
+    },
+    {
+      "name": "SideBar._show_undo",
+      "line": 8002,
+      "end": 8005
+    },
+    {
+      "name": "ProfileDialog",
+      "line": 8009,
+      "end": 8060
+    },
+    {
+      "name": "ProfileDialog.__init__",
+      "line": 8013,
+      "end": 8060
+    },
+    {
+      "name": "StartupWizard",
+      "line": 8064,
+      "end": 8276
+    },
+    {
+      "name": "StartupWizard.__init__",
+      "line": 8071,
+      "end": 8108
+    },
+    {
+      "name": "StartupWizard._page_wrapper",
+      "line": 8110,
+      "end": 8128
+    },
+    {
+      "name": "StartupWizard._build_pages",
+      "line": 8130,
+      "end": 8245
+    },
+    {
+      "name": "StartupWizard._go_next",
+      "line": 8247,
+      "end": 8267
+    },
+    {
+      "name": "StartupWizard._go_back",
+      "line": 8269,
+      "end": 8276
+    },
+    {
+      "name": "SessionSummaryDialog",
+      "line": 8280,
+      "end": 8313
+    },
+    {
+      "name": "SessionSummaryDialog.__init__",
+      "line": 8284,
+      "end": 8313
+    },
+    {
+      "name": "RunEverythingSummaryDialog",
+      "line": 8317,
+      "end": 8518
+    },
+    {
+      "name": "RunEverythingSummaryDialog.__init__",
+      "line": 8323,
+      "end": 8432
+    },
+    {
+      "name": "RunEverythingSummaryDialog._verdict_text",
+      "line": 8436,
+      "end": 8437
+    },
+    {
+      "name": "RunEverythingSummaryDialog._split_findings",
+      "line": 8439,
+      "end": 8458
+    },
+    {
+      "name": "RunEverythingSummaryDialog._bucket_column",
+      "line": 8460,
+      "end": 8493
+    },
+    {
+      "name": "RunEverythingSummaryDialog._open_report",
+      "line": 8495,
+      "end": 8518
+    },
+    {
+      "name": "_collect_findings_by_section",
+      "line": 8522,
+      "end": 8548
+    },
+    {
+      "name": "_render_finding_rows",
+      "line": 8552,
+      "end": 8566
+    },
+    {
+      "name": "_build_exec_statement",
+      "line": 8569,
+      "end": 8575
+    },
+    {
+      "name": "generate_report",
+      "line": 8577,
+      "end": 8753
+    },
+    {
+      "name": "WorkspaceRouter",
+      "line": 8756,
+      "end": 8769
+    },
+    {
+      "name": "WorkspaceRouter.__init__",
+      "line": 8758,
+      "end": 8759
+    },
+    {
+      "name": "WorkspaceRouter.setCurrentIndex",
+      "line": 8761,
+      "end": 8769
+    },
+    {
+      "name": "AuditDashboard",
+      "line": 8773,
+      "end": 9412
+    },
+    {
+      "name": "AuditDashboard.__init__",
+      "line": 8776,
+      "end": 8837
+    },
+    {
+      "name": "AuditDashboard._build_workspace",
+      "line": 8841,
+      "end": 9066
+    },
+    {
+      "name": "AuditDashboard._workspace_action",
+      "line": 9068,
+      "end": 9074
+    },
+    {
+      "name": "AuditDashboard._scroll_page",
+      "line": 9077,
+      "end": 9082
+    },
+    {
+      "name": "AuditDashboard._navigate",
+      "line": 9084,
+      "end": 9089
+    },
+    {
+      "name": "AuditDashboard._toggle_activity",
+      "line": 9091,
+      "end": 9098
+    },
+    {
+      "name": "AuditDashboard._refresh_workspace",
+      "line": 9100,
+      "end": 9109
+    },
+    {
+      "name": "AuditDashboard._open_assessment_summary",
+      "line": 9111,
+      "end": 9112
+    },
+    {
+      "name": "AuditDashboard._open_diagnostics",
+      "line": 9114,
+      "end": 9116
+    },
+    {
+      "name": "AuditDashboard._open_scheduler",
+      "line": 9118,
+      "end": 9119
+    },
+    {
+      "name": "AuditDashboard._open_prerequisites",
+      "line": 9121,
+      "end": 9123
+    },
+    {
+      "name": "AuditDashboard._shutdown_busy",
+      "line": 9125,
+      "end": 9129
+    },
+    {
+      "name": "AuditDashboard.closeEvent",
+      "line": 9131,
+      "end": 9167
+    },
+    {
+      "name": "AuditDashboard._check_shutdown",
+      "line": 9169,
+      "end": 9177
+    },
+    {
+      "name": "AuditDashboard._detect_profile",
+      "line": 9180,
+      "end": 9194
+    },
+    {
+      "name": "AuditDashboard._toggle_mode",
+      "line": 9196,
+      "end": 9207
+    },
+    {
+      "name": "AuditDashboard._change_theme",
+      "line": 9209,
+      "end": 9232
+    },
+    {
+      "name": "AuditDashboard._update_theme_lock_button",
+      "line": 9234,
+      "end": 9247
+    },
+    {
+      "name": "AuditDashboard._toggle_theme_lock",
+      "line": 9249,
+      "end": 9263
+    },
+    {
+      "name": "AuditDashboard._change_lang",
+      "line": 9265,
+      "end": 9274
+    },
+    {
+      "name": "AuditDashboard._show_session_summary",
+      "line": 9276,
+      "end": 9278
+    },
+    {
+      "name": "AuditDashboard._run_everything",
+      "line": 9280,
+      "end": 9285
+    },
+    {
+      "name": "AuditDashboard._run_everything._show_summary",
+      "line": 9282,
+      "end": 9284
+    },
+    {
+      "name": "AuditDashboard._generate_report",
+      "line": 9287,
+      "end": 9329
+    },
+    {
+      "name": "AuditDashboard._show_code",
+      "line": 9331,
+      "end": 9395
+    },
+    {
+      "name": "AuditDashboard._show_dev_log",
+      "line": 9397,
+      "end": 9412
+    },
+    {
+      "name": "configure_qt_platform_theme",
+      "line": 9415,
+      "end": 9441
+    },
+    {
+      "name": "main",
+      "line": 9445,
+      "end": 9480
+    }
+  ],
+  "visual_alignment_scope": [
+    "PrerequisitesPanel.__init__",
+    "ToolsPanel._style_cat_buttons",
+    "apply_theme",
+    "constant:THEMES",
+    "constant:UI_METRICS",
+    "make_style"
+  ],
+  "all_definitions_current_date": "2026-11-18",
+  "confirmation_hardening_scope": [
+    "safe_confirmation_buttons",
+    "privileged_question",
+    "PrerequisitesPanel.install",
+    "PreActionDialog.__init__",
+    "GuidedWizard._run_fix",
+    "ToolCard._install",
+    "UndoPanel._run_undo",
+    "make_style"
+  ],
+  "python_files_current": [
+    "linux-security-dashboard.py",
+    "tests/capture_ui_baseline.py",
+    "tests/confirmation_keyboard_probe.py",
+    "tests/test_assessment_coverage.py",
+    "tests/test_assessment_sequence.py",
+    "tests/test_command_outcomes.py",
+    "tests/test_confirmation_keyboard.py",
+    "tests/test_html_reports.py",
+    "tests/test_prerequisites.py",
+    "tests/test_prerequisites_ui.py",
+    "tests/test_qt_platform_theme.py",
+    "tests/test_responsive_findings.py",
+    "tests/test_scan_isolation.py",
+    "tests/test_shutdown_http.py",
+    "tests/test_streaming_execution.py",
+    "tests/test_streaming_outcomes.py",
+    "tests/test_structured_undo.py",
+    "tests/test_ui_foundation.py",
+    "tests/test_undo_history_store.py",
+    "tests/test_undo_persistence_ui.py",
+    "tests/test_workspace_navigation.py",
+    "tests/ui_findings_probe.py",
+    "tests/ui_navigation_probe.py",
+    "tests/ui_prerequisites_probe.py"
+  ]
+}

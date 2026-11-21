@@ -16,6 +16,16 @@ Skipped outcomes; Quick checks can still run its unaffected probes. Coverage sta
 separate from findings. Seven-step RUN EVERYTHING and the legacy three-step scope
 are unchanged.
 
+Discovery now shows the PATH discovery location and a separate trust
+diagnostic. A found executable can be marked Installed while its path is not
+root-controlled. This does not bless arbitrary PATH programs. Privileged execution
+now ignores caller PATH and resolves the program, sudo and env through protected
+system directories immediately before dispatch. Non-privileged scan PATH policy
+is unchanged. Prerequisite installer tools also require regular executable files with root-owned, non-group/world-
+writable original/resolved paths and parents. Symlinks to protected system tools
+can pass; inaccessible or unsafe paths fail closed. These stat checks do not verify
+signatures, package provenance, ACLs, mount semantics or an immutable execution target.
+
 `PREREQUISITES` is the canonical executable-to-package registry. Generic probes and
 existing RPM/pacman package-query paths remain available on their supported
 platforms. Ubuntu-specific CVEs remain unsupported elsewhere. The installation
@@ -34,9 +44,16 @@ candidate does not trigger a replacement, repository addition or external downlo
 2. Only new packages are accepted. Removals, upgrades, duplicate/unrecognized
    changes and unrelated pending package configuration are rejected. Requested
    packages and all resolved dependencies are pinned to the previewed versions.
+   The parser accepts explicitly recognized C-locale boilerplate/package lists and
+   Inst/Conf records only; unknown transaction actions or output abort the preview.
+   A new APT output format can therefore disable installation until reviewed.
 3. A scrolling plain-text dialog displays the exact packages, full command,
    sources, absence of removals/upgrades, side effects and irreversibility warning.
    No is the default. Authentication is requested only after explicit approval.
+   Qt automatic default promotion is disabled on both buttons. No also receives
+   initial focus. Tab/focus changes cannot make Yes the default; Enter never
+   approves, including when details consume it. Use Space on Yes or click it to
+   approve. Escape declines. See [the keyboard audit](ui/CONFIRMATION_REVIEW.md).
 4. The existing password prompt and shared worker ownership are reused. The new
    prerequisite executor uses absolute root-owned binaries, argv without a shell,
    a sanitized environment and fixed APT options. User APT_CONFIG/proxy environment
@@ -55,14 +72,18 @@ reviewing failures; no repeated installation prompt is generated automatically.
 
 ## Transaction lifecycle and safety
 
-The generic CommandWorker uses subprocess.run with a timeout, which can kill its
-direct child. It is **not** used for prerequisite installation. The dedicated
-executor drains owned output concurrently, caps retained output at 2 MiB and live
-progress notifications at 1,024, and waits for its direct package-manager process.
+CommandWorker now delegates privileged package operations (install, removal and
+restoration) to the same `run_package_transaction` collector as prerequisites.
+Privileged shell recipes also use that policy because they can invoke package
+managers. Other command deadlines remain unchanged. The collector drains owned
+output, caps retained output at 2 MiB and live progress notifications at 1,024,
+and waits for its direct package-manager/wrapper process.
 It never calls kill/terminate and has no automatic cancellation or execution deadline
 once dispatched. Output-collection failures still wait/drain instead of abandoning
 an active package transaction. Live progress uses fixed messages; detailed output
 is redacted after completion to avoid leaking credentials split across chunks.
+Every collector-recovery iteration sleeps 50 ms, including successful empty reads,
+so EOF cannot cause an unbounded tight poll loop while the process is still alive.
 
 Native Qt completion retains worker references. A continuation lease spans preview
 confirmation/authentication and subsequent dispatch, including nested dialog event
@@ -97,9 +118,11 @@ a crontab entry, and sensor installation does not run sensors-detect or change f
   it is not a hard streaming memory bound like the transaction collector.
 - Credential references are released with the completed job's closure, not securely
   erased from Python memory. No password is written to preferences/history/log files.
-- Older optional ToolCard/guided-fix package installers remain separate and retain
-  their pre-existing timeout behaviour. This increment does not claim to make every
-  legacy package-install path safe; that needs its own review/correction.
+- Optional ToolCard/guided-fix installers and validated package undo now share the
+  no-forced-termination collector. Their existing approvals, package choices and
+  undo rules remain separate from the narrower prerequisite installation allowlist.
+  Privileged shell recipes have no automatic execution deadline either; they can
+  defer closing indefinitely. There is no automatic retry or claim of cancellation.
 - UI labels are English, and non-Ubuntu package display mappings remain limited;
   automatic installation is deliberately disabled outside reviewed Ubuntu releases.
 
@@ -123,3 +146,72 @@ unchanged command/streaming/HTTP workers, ScanOwnership, WorkerMixin, undo store
 validation, scores/reports, the 4G table/dialog and existing guided/tool installers.
 The scheduler's original Tools shortcut now uses the same prerequisite gate as
 Assessments, preventing it from bypassing the missing-crontab check.
+
+The preceding 248-test result describes the initial 4H implementation. Consolidated
+hardening results and broader deferred risks are recorded in
+[the review inventory](consolidated_hardening_review.md); its screenshots are under
+`screenshots/increment4h-hardening/`. The older review archive is unchanged and does
+not contain the subsequent hardening corrections.
+
+
+## Final security hardening — 2026-11-21
+
+H03, H05 and H16 corrections are documented in
+[the final hardening handover](final_security_hardening.md). Prerequisite previews
+use the same trusted invocation builder as execution, including the sudo `--`
+separator, clean environment and protected executable paths. Legacy internal
+command text is normalized with `shlex.split` into argv once; saved undo strings
+remain non-executable and the structured undo validator is unchanged.
+
+Sanitization runs before worker signals, error storage, UI presentation and application
+logging. It covers stdin password matches, URL userinfo/query/fragment and named
+authentication path segments, common token/secret fields, authentication headers,
+private-key blocks and recognized credential prefixes. Unexpected parser/runtime
+exceptions report the exception class without interpolating opaque input. Known
+parser rejection messages omit the rejected raw line. Useful non-sensitive package
+errors remain visible. Privileged streaming uses fixed live messages until the
+bounded capture can be sanitized as a whole; Lynis result parsing still uses the
+completed capture. General non-privileged streaming deadlines/bounds are unchanged.
+
+Redaction is conservative and not a proof that arbitrary unlabeled secrets can be
+identified. Do not paste raw package output into new display/log paths. Exact password
+matching is reference cleanup, not memory erasure. Path stat checks are not atomic
+execution pinning; protected system paths, root/package trust and local filesystem
+semantics remain assumptions. No real package installation or sudo was validated.
+
+
+## Shared privileged-output confidentiality boundary
+
+The pure `privileged_capture(stdout, stderr, password, complete=...)` policy is now
+shared by streaming commands, buffered privileged commands, package transactions,
+Timeshift and SMART. It is not a process runner: each caller retains its existing
+collection, deadlines, cleanup and ownership implementation.
+
+Only complete, cleaned-up evidence may be released. The policy normalizes controls
+and legacy bare colour markers before matching known credentials, sanitizes both
+channels together and suppresses reconstructable cross-stream credentials. Both
+prepared streams must pass before either reaches signals, Activity or a parser.
+Lynis consumes already-normalized evidence and does not strip more markers later.
+At stream joins, credential whitespace must be present in the boundary whitespace
+run, in order; extra separators may be ignored. This does not strip whitespace
+throughout diagnostics or invent a credential's missing spaces/tabs. It can
+conservatively suppress unrelated adjacent records matching that boundary shape.
+Partial Lynis findings also check the final name and prefixed description against
+the attempt's known credential before storing or displaying them. Unsafe derived
+findings use a fixed diagnostic and clear retained attempt output; safe partial
+findings remain available. Parser exceptions do not interpolate evidence.
+Unknown secrets and arbitrary interleavings cannot be guaranteed safe without
+broader suppression. The deferred URL-context formatting issue is unchanged.
+
+Package results distinguish `code` (actual process outcome), `capture_complete`
+(EOF, no overflow, no collection/cleanup failure) and `diagnostics_allowed`
+(confidentiality decision). `output` contains approved text only. A capture failure
+clears retained text and uses fixed diagnostics, but still waits/drains and reaps
+naturally. No transaction timeout, kill, cancellation or automatic retry is added.
+Verification still runs after package completion; discarded diagnostics do not
+prove that a package operation failed or that nothing changed.
+
+The bounded regression evidence is in `tests/test_privileged_boundary.py` and
+`tests/test_review_hardening.py`. Tests use synthetic credentials, mocks, temporary
+state and inert local fixtures; no real installation or privileged execution is
+claimed. This update documents this boundary, not a whole-system revalidation.

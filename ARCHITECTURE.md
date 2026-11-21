@@ -77,6 +77,27 @@ and an explicit continuation lease protect native completion and nested confirma
 loops. The dashboard also counts read-only prerequisite workers when closing.
 See [canonical workflow, limits and legacy-path caveats](agent_docs/prerequisites.md).
 
+Consolidated hardening adds explicit APT output grammar (unknown actions abort),
+paced recovery after collector failure, and separate executable discovery versus
+root-controlled-path diagnostics. Installer tools must pass parent/resolved-path
+checks; this is not package provenance verification or an atomic execution guard.
+Report tool presence is sampled once per unique tool per report, without a stale
+cross-report cache. Shared selected styles retain native ticks/dots and add border
+markers for rows/navigation. No scan, undo or worker architecture changes accompany
+these corrections. See the [ranked review and deferred decisions](agent_docs/consolidated_hardening_review.md).
+
+The supplied UI reference alignment is defined in
+[DESIGN_SYSTEM.md](agent_docs/ui/DESIGN_SYSTEM.md). It adapts teal accents and
+interaction-state rules to the existing light/Hybrid appearances; legacy palettes,
+controllers, data and authorization paths remain intact. The prerequisite primary
+button role is presentation only. Before/after synthetic Qt evidence is linked there.
+
+Final 4H confirmation decisions use `safe_confirmation_buttons` to disable Qt
+automatic default promotion and keep No/Cancel as the sole default/initial focus.
+`privileged_question` shares this policy across existing guided-fix, tool-install
+and rollback decisions. Password entry, execution/undo boundaries and shutdown are
+unchanged. See [the runtime keyboard audit](agent_docs/ui/CONFIRMATION_REVIEW.md).
+
 ## Component table (file → role)
 
 The application is a single-file PyQt6 GUI. All components live in [linux-security-dashboard.py](linux-security-dashboard.py); line numbers below pin each component.
@@ -571,3 +592,19 @@ command outcome remains an unknown/failure, never an automatic successful step.
 Confirmed pre-dispatch startup failure still performs immediate recovery because
 there is no running worker to await. Ownership cleanup remains WorkerMixin's job;
 advancing one command cannot retire the next command's worker.
+
+
+### Shared privileged boundary (final 4H hardening)
+
+`privileged_invocation` resolves sudo/env/the requested program through protected
+system directories, rechecks path trust at dispatch, and returns structured argv
+plus a minimal child environment. Legacy built-in command text uses `command_argv`;
+structured undo validation continues to construct its own allowlisted argv.
+`CommandWorker` routes privileged package managers and shell recipes into
+`run_package_transaction`, also used by the prerequisite executor after plan
+revalidation. No timeout/kill/terminate applies to those transactions; native Qt
+completion remains the ownership release boundary. Other command/streaming deadlines
+remain in place; privileged streaming refuses package/shell transactions.
+`sanitize_diagnostic` and `diagnostic_exception` protect emitted, displayed, stored
+and logged diagnostics. They are not a general data-loss-prevention guarantee.
+See agent_docs/final_security_hardening.md for evidence and limitations.

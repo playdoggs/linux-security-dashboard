@@ -15,6 +15,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from privileged_test_support import install_helpers
+
 from PyQt6.QtCore import QCoreApplication, QThread, pyqtSignal
 
 SOURCE = Path(__file__).resolve().parents[1] / "linux-security-dashboard.py"
@@ -34,8 +36,24 @@ for node in TREE.body:
 
 
 def load_definition(node, namespace=NS):
+    install_helpers(namespace)
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(SOURCE), "exec"), namespace)
     return namespace[node.name]
+
+
+def question_stub(namespace):
+    """Mock only the modal decision in non-widget worker tests.
+
+    Production button defaults and keyboard behaviour are exercised separately
+    with real Qt in test_confirmation_keyboard and ui_prerequisites_probe.
+    """
+    def confirm(*args):
+        box=namespace['QMessageBox']
+        return box.question(*args, box.StandardButton.Yes | box.StandardButton.No, box.StandardButton.No)
+    return confirm
+
+
+NS['privileged_question']=question_stub(NS)
 
 
 CommandWorker = load_definition(CLASSES["CommandWorker"])
@@ -94,7 +112,7 @@ class CommandOutcomes(unittest.TestCase):
                 _, events, run = self.run_worker(
                     subprocess.CompletedProcess([], 0, b"", b""),
                     sudo=True, password=password)
-                self.assertEqual(run.call_args.args[0][0], "sudo")
+                self.assertEqual(run.call_args.args[0][0], "/usr/bin/sudo")
                 self.assertEqual(events.success, [True])
                 if password:
                     self.assertEqual(run.call_args.kwargs["input"], password + b"\n")

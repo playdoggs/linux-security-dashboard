@@ -33,7 +33,7 @@ def main():
         from PyQt6 import sip
         from PyQt6.QtCore import Qt, QThread, pyqtSignal, QCoreApplication, QEvent
         from PyQt6.QtTest import QTest
-        from PyQt6.QtWidgets import QApplication, QPushButton, QLineEdit, QMessageBox
+        from PyQt6.QtWidgets import QApplication, QPushButton, QLineEdit, QMessageBox, QRadioButton
         real_run = subprocess.run
         unexpected = []
         def safe_run(argv, *a, **kw):
@@ -176,6 +176,7 @@ def main():
                 for i, name in enumerate(m.ASSESSMENT_STEPS)]}
             win.findings._assessment_coverage = coverage
             before = (win.findings.table.rowCount(), m.RISK.score(), copy.deepcopy(coverage))
+            profile_tab_checks=0
             for theme in m.THEMES:
                 win.theme_combo.setCurrentText(theme)
                 m.refresh_theme_widgets(app)
@@ -190,6 +191,52 @@ def main():
                         win._navigate(name)
                         QTest.qWait(30)
                         save(theme.lower().replace(' ', '-') + '-' + name.lower())
+                    win._navigate('Findings')
+                    win.resize(1100,700)
+                    win.findings.table.setFocus()
+                    QTest.qWait(30)
+                    # Set current selection after queued focus/resize delivery;
+                    # focus acquisition may establish a different current index.
+                    win.findings.table.setCurrentCell(0,0)
+                    win.findings.table.selectRow(0)
+                    check(bool(win.findings.table.selectedItems()),'row selection unavailable')
+                    check(win.stack.width()>500,'small-window content inaccessible')
+                    save(theme.lower().replace(' ','-')+'-selected-row-small')
+                    win._open_prerequisites()
+                    QTest.qWait(20)
+                    save(theme.lower().replace(' ','-')+'-prerequisites-small')
+                    profile=m.ProfileDialog('mixed',75,win)
+                    profile.show();app.setActiveWindow(profile);QTest.qWait(20)
+                    radios=profile.findChildren(QRadioButton)
+                    check(sum(r.isChecked() for r in radios)==1,'profile radio selection lost')
+                    profile.remember.setFocus()
+                    check(profile.remember.hasFocus(),'profile checkbox focus unavailable')
+                    QTest.keyClick(profile.remember,Qt.Key.Key_Space)
+                    check(not profile.remember.isChecked(),'checkbox keyboard toggle failed')
+                    QTest.keyClick(profile.remember,Qt.Key.Key_Space)
+                    check(profile.remember.isChecked(),'checked state not restored')
+                    QTest.keyClick(profile.remember,Qt.Key.Key_Tab)
+                    check(app.focusWidget() is not profile.remember,'profile Tab focus stuck')
+                    profile_tab_checks+=1
+                    save(theme.lower().replace(' ','-')+'-selected-profile-and-checkbox',profile)
+                    # A safe dialog dismissal control exercises the shared focus
+                    # and pressed paint states without dispatching application work.
+                    cancel=profile.findChild(m.QDialogButtonBox).button(m.QDialogButtonBox.StandardButton.Cancel)
+                    app.setActiveWindow(profile)
+                    cancel.setFocus(Qt.FocusReason.TabFocusReason)
+                    QTest.qWait(20)
+                    check(cancel.hasFocus(),'synthetic dialog button focus unavailable')
+                    save(theme.lower().replace(' ','-')+'-focused-dialog-button',profile)
+                    QTest.mouseMove(cancel,cancel.rect().center())
+                    QTest.mousePress(cancel,Qt.MouseButton.LeftButton)
+                    check(cancel.isDown(),'button pressed state unavailable')
+                    save(theme.lower().replace(' ','-')+'-pressed-dialog-button',profile)
+                    QTest.mouseRelease(cancel,Qt.MouseButton.LeftButton)
+                    check(not profile.isVisible(),'Cancel dismissal did not close dialog')
+                    profile.reject();profile.deleteLater()
+                    win.resize(1440,900)
+            results.append('Enterprise/Hybrid selected row, checked profile/checkbox, Space and 1100x700 layouts passed')
+            results.append(f'profile Tab traversal: {profile_tab_checks}/2 focused dialogs verified')
             results.append('all seven themes preserve findings, score and incomplete coverage')
             win.theme_combo.setCurrentText('Enterprise Workspace')
             win._navigate('Findings')

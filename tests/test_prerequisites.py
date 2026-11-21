@@ -10,11 +10,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 import unittest
+from privileged_test_support import install_helpers
 
 SOURCE = Path(__file__).resolve().parents[1] / 'linux-security-dashboard.py'
 TREE = ast.parse(SOURCE.read_text())
 NAMES = {'PREREQUISITES','PREREQUISITE_INSTALL_RELEASES','PREREQUISITE_EFFECTS','APT_PREREQUISITE_OPTIONS',
-         'detect_prerequisites','prerequisite_rows','prerequisite_os','prerequisite_read','prerequisite_candidate','prerequisite_apt_state',
+         'detect_prerequisites','executable_trust','prerequisite_rows','prerequisite_os','prerequisite_read','prerequisite_candidate','prerequisite_apt_state',
          'prerequisite_apt_argv','parse_prerequisite_simulation','build_prerequisite_plan','prerequisite_redact',
          'prerequisite_gate','execute_prerequisite_plan','verify_prerequisite_plan'}
 
@@ -23,6 +24,7 @@ def namespace():
     ns = dict(os=os, re=re, stat=stat, subprocess=subprocess, time=time, Path=Path, selectors=selectors,
               shutil=SimpleNamespace(which=Mock(return_value='/trusted/executable')),
               coverage_result=lambda state, reason: dict(outcome=state, reason=reason))
+    install_helpers(ns, transaction_stub=False)
     for node in TREE.body:
         name = node.name if isinstance(node, ast.FunctionDef) else None
         if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name): name=node.targets[0].id
@@ -44,6 +46,50 @@ class PrerequisiteLogic(unittest.TestCase):
         self.assertTrue(all(not r['installable'] for r in rows))
         self.assertEqual(rows[-1]['status'],'Not Required')
         self.ns['prerequisite_candidate'].assert_not_called()
+
+    def test_discovered_executable_does_not_imply_trusted_path(self):
+        self.ns['executable_trust']=Mock(return_value=(False,'path or parent is not root-controlled'))
+        row=self.detect()[0]
+        self.assertEqual(row['status'],'Installed')
+        self.assertIn('Discovered: /trusted/executable',row['reason'])
+        self.assertIn('not root-controlled',row['reason'])
+        self.assertIn('Scan evidence',row['reason'])
+
+    @patch.object(os, 'readlink', return_value='/protected/tool')
+    def test_root_trust_checks_parent_and_resolved_path(self, readlink):
+        states = {'/': (0, stat.S_IFDIR | 0o755),
+                  '/synthetic': (0, stat.S_IFDIR | 0o755),
+                  '/synthetic/bin': (0, stat.S_IFLNK | 0o777),
+                  '/protected': (0, stat.S_IFDIR | 0o755),
+                  '/protected/tool': (0, stat.S_IFREG | 0o755)}
+        class FixturePath(type(Path())):
+            def lstat(self):
+                if str(self) not in states:
+                    raise FileNotFoundError()
+                uid, mode = states[str(self)]
+                return SimpleNamespace(st_uid=uid, st_mode=mode)
+            def readlink(self):
+                return FixturePath('/protected/tool')
+        self.ns['Path'] = FixturePath
+        trust = self.ns['executable_trust']
+        self.assertTrue(trust('/synthetic/bin')[0])
+        for parent in ('/synthetic', '/protected'):
+            states[parent] = (0, stat.S_IFDIR | 0o777)
+            self.assertFalse(trust('/synthetic/bin')[0])
+            states[parent] = (0, stat.S_IFDIR | 0o755)
+        for uid, mode in ((1000, stat.S_IFREG | 0o755), (0, stat.S_IFREG | 0o644),
+                          (0, stat.S_IFDIR | 0o755)):
+            states['/protected/tool'] = (uid, mode)
+            self.assertFalse(trust('/synthetic/bin')[0])
+        del states['/protected/tool']
+        self.assertFalse(trust('/synthetic/bin')[0])
+
+    def test_untrusted_installer_path_rejected_before_simulation(self):
+        self.ns['executable_trust']=Mock(return_value=(False,'unsafe parent'))
+        self.ns['prerequisite_read']=Mock()
+        with self.assertRaisesRegex(ValueError,'Untrusted'):
+            self.ns['build_prerequisite_plan'](['lynis'])
+        self.ns['prerequisite_read'].assert_not_called()
 
     def test_missing_candidate_is_eligible_and_deduplicated(self):
         self.ns['shutil'].which.side_effect=lambda name:'/trusted/'+name if name in ('sudo','apt-get','apt-cache','dpkg-query') else None
@@ -118,6 +164,33 @@ class PrerequisiteLogic(unittest.TestCase):
         text='Inst sensors-data (2.0 Ubuntu:26.04 [amd64])\nInst lm-sensors (1.2-3 Ubuntu:26.04 [amd64])\nConf sensors-data (2.0 Ubuntu:26.04 [amd64])\nConf lm-sensors (1.2-3 Ubuntu:26.04 [amd64])'
         self.assertEqual(self.ns['parse_prerequisite_simulation'](text),(('lm-sensors','1.2-3'),('sensors-data','2.0')))
 
+    def test_unknown_simulation_actions_fail_closed(self):
+        valid='Inst lynis (1.2-3 Ubuntu [amd64])\nConf lynis (1.2-3 Ubuntu [amd64])'
+        for action in ('Unpk other (2 Ubuntu [amd64])','Reinst other (2 Ubuntu [amd64])',
+                       'Unknown future action','  Remv ssh [1]','Conf malformed',
+                       'Inst other [1] (2 Ubuntu [amd64])','E: broken metadata'):
+            with self.subTest(action=action):
+                with self.assertRaises(ValueError):self.ns['parse_prerequisite_simulation'](valid+'\n'+action)
+
+    def test_known_simulation_headers_and_package_lists_are_accepted(self):
+        text='''Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+The following additional packages will be installed:
+  dependency
+Suggested packages:
+  optional-tool
+The following NEW packages will be installed:
+  dependency lynis
+0 upgraded, 2 newly installed, 0 to remove and 4 not upgraded.
+Need to get 10.0 kB of archives.
+After this operation, 20.0 kB of additional disk space will be used.
+Inst dependency (2 Ubuntu [amd64])
+Inst lynis (1.2-3 Ubuntu [amd64])
+Conf dependency (2 Ubuntu [amd64])
+Conf lynis (1.2-3 Ubuntu [amd64])'''
+        self.assertEqual(self.ns['parse_prerequisite_simulation'](text),(('dependency','2'),('lynis','1.2-3')))
+
     def test_removals_upgrades_configuration_and_malformed_rejected(self):
         for text in ('Remv ssh [1]', 'Purg ssh [1]', 'Inst pkg [1] (2 Ubuntu [amd64])',
                      'Inst -x (2 Ubuntu [amd64])', 'Inst pkg (x;evil Ubuntu [amd64])',
@@ -136,6 +209,7 @@ class PrerequisiteLogic(unittest.TestCase):
             with self.assertRaises(ValueError):self.ns['prerequisite_apt_argv']([(package,'1')])
 
     def prepare_plan(self):
+        self.ns['executable_trust']=Mock(return_value=(True,'synthetic root-controlled path'))
         self.ns['Path']=Mock(return_value=SimpleNamespace(stat=lambda:SimpleNamespace(st_uid=0,st_mode=stat.S_IFREG|0o755)))
         self.ns['prerequisite_apt_state']=Mock(return_value='state')
         self.ns['prerequisite_read']=Mock(side_effect=['','Inst lynis (1.2-3 Ubuntu [amd64])\nConf lynis (1.2-3 Ubuntu [amd64])','Candidate: 1.2-3'])
@@ -169,19 +243,34 @@ class PrerequisiteLogic(unittest.TestCase):
         plan={'requested':(('lynis','1'),),'command':('/usr/bin/apt-get','install','lynis=1')}
         self.ns['build_prerequisite_plan']=Mock(return_value=plan)
         process=Mock()
-        process.poll.side_effect=[None,0]
+        process.poll.side_effect=[None,None,0]
         process.wait.return_value=0
         process.stdin.closed=process.stdout.closed=False
         with patch.object(subprocess,'Popen',return_value=process) as popen, \
              patch.object(selectors,'DefaultSelector',side_effect=OSError('fixture read failure')), \
-             patch.object(os,'set_blocking'),patch.object(os,'read',return_value=b''):
+             patch.object(os,'set_blocking'),patch.object(os,'read',return_value=b''), \
+             patch.object(time,'sleep') as sleep:
             result=self.ns['execute_prerequisite_plan'](plan,b'fake',Mock())
-        self.assertIn('fixture read failure',result['error'])
+        self.assertIn('OSError',result['error'])
         process.wait.assert_called_once()
+        self.assertEqual(sleep.call_count,2)
+        self.assertTrue(all(call.args==(.05,) for call in sleep.call_args_list))
         process.kill.assert_not_called();process.terminate.assert_not_called()
         self.assertNotIn('timeout',popen.call_args.kwargs)
         self.assertEqual(popen.call_args.args[0][0],'/usr/bin/sudo')
         self.assertNotIn('shell',popen.call_args.kwargs)
+
+    def test_empty_exception_text_still_records_collection_failure(self):
+        plan={'requested':(('lynis','1'),),'command':('/usr/bin/apt-get','install','lynis=1')}
+        self.ns['build_prerequisite_plan']=Mock(return_value=plan)
+        process=Mock();process.poll.return_value=0;process.wait.return_value=0
+        process.stdin.closed=process.stdout.closed=False
+        with patch.object(subprocess,'Popen',return_value=process), \
+             patch.object(selectors,'DefaultSelector',side_effect=RuntimeError()):
+            result=self.ns['execute_prerequisite_plan'](plan,b'fake',Mock())
+        self.assertIn('RuntimeError',result['error'])
+        process.wait.assert_called_once()
+        process.kill.assert_not_called();process.terminate.assert_not_called()
 
     def test_missing_temperature_and_all_quick_prerequisites_are_skipped(self):
         self.ns['prerequisite_gate']=Mock(return_value=False)
